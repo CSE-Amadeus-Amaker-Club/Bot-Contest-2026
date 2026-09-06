@@ -3,40 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Web UI — K10 Bot</title>
-  <link rel="stylesheet" href="../amaker.css">
-  <link rel="stylesheet" href="./brickbrawl.css">
+  <title>aMaker Club Contest Guide — K10 Bot</title>
+  <link rel="stylesheet" href="./amaker.css">
+  <link rel="stylesheet" href="./contest.css">
 </head>
 <body>
   <div class="page-shell">
 
     <div class="docs-nav">
-      <a href="d4a-contest-guide.html">🏆 D4A Contest</a>
+      <a href="bot-contest-guide.html" class="active">aMaker Contest</a>
       <a href="quickstart.html">⚡ Quickstart</a>
-      <a href="web-ui.html" class="active">🌐 Web UI</a>
       <a href="board-ui.html">📟 Board UI</a>
-      <a href="../BotScriptUserGuide.html" target="_blank">🕹 JS API</a>
       <a href="communication.html">📡 Communication</a>
       <a href="binary-protocol.html">🔢 Binary Protocol</a>
-      <a href="architecture.html">🏗 Architecture</a>
+      <a href="ai-agent-readme.html">AI Coding References</a>
     </div>
 
     <section class="hero">
       <div class="hero-copy">
-        <p class="hero-kicker">// D4A Team Building • Robot Combat League</p>
-        <h1>Web UI</h1>
-        <p>Connect to the bot, claim control, stream video, run scripts, and manage the match from the browser.</p>
+        <h1>aMaker bot contest</h1>
         <div class="hero-actions" aria-hidden="true">
           <span>Build</span>
-          <span>Connect</span>
-          <span>Control</span>
-          <span>Survive</span>
+          <span>Code</span>
+          <span>Fight</span>
         </div>
       </div>
 
       <aside class="hero-card">
-        <strong>Mission Brief</strong>
-        <p>The guide below keeps the original documentation content, but the page shell now follows the Brick Brawl poster language: dark arena backdrop, hazard-strip framing, neon cyan controls, and oversized competition typography.</p>
+        <strong>Event Brief</strong>
+        <p>Current contest rules, supplied hardware, build constraints, safety requirements, and the controller handoff.</p>
       </aside>
     </section>
 
@@ -47,7 +42,7 @@
 
   <script src="./marked.min.js"></script>
   <script>
-    fetch('./web-ui.md')
+    fetch('./bot-contest-guide.md')
       .then(r => r.text())
       .then(md => {
         const target = document.getElementById('md-content');

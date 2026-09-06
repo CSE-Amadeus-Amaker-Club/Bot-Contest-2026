@@ -10,7 +10,7 @@ Press **Button A** (on the UniHiker K10 board) to cycle forward through all scre
 Navigation wraps from the last screen back to the first.  
 A 250 ms debounce prevents accidental double-presses.
 
-The same navigation is also available remotely from the web UI (**📝 Play** page → K10 Display section) or via binary protocol commands (see [binary-protocol.md](binary-protocol.md)).
+The same navigation is also available via binary protocol screen commands (see [binary-protocol.md](binary-protocol.md)).
 
 ---
 
@@ -20,10 +20,13 @@ The same navigation is also available remotely from the web UI (**📝 Play** pa
 |---|---|---|---|
 | 0 | Splash | SplashScreen | Boot image — shown once at startup |
 | 1 | App Info | AppScreen | Live dashboard (default after splash) |
-| 2 | App Log | LogScreen | Application / bot message log |
-| 3 | Svc Log | LogScreen | Service lifecycle log |
-| 4 | Debug Log | LogScreen | Verbose debug log |
-| 5 | ESP Log | LogScreen | ESP-IDF system log |
+| 2 | Sensors | SensorsScreen | Multi-sensor dashboard (HuskyLens + Lidar + Accelerometer + Geomag) |
+| 3 | App Log | LogScreen | Application / bot message log |
+| 4 | Svc Log | LogScreen | Service lifecycle log |
+| 5 | Debug Log | LogScreen | Verbose debug log |
+| 6 | ESP Log | LogScreen | ESP-IDF system log |
+
+> Sensor availability is indicated by panel title color: cyan when operational, dark grey when not operational.
 
 ---
 
@@ -31,7 +34,7 @@ The same navigation is also available remotely from the web UI (**📝 Play** pa
 
 Displayed at boot. Shows the splash image :)
 Automatically advances to **App Info** after **10 seconds** (or immediately if Button A is pressed).
-![board-ui.png](board-ui.png)
+
 ---
 
 ## Screen 1 — App Info (dashboard)
@@ -45,10 +48,8 @@ The main diagnostic screen, refreshed every **500 ms**. It is divided into five 
 | 1 | *(title)* | **aMaker Bot** — coloured by service health¹ + bot name |
 | 3 | SSID | Connected WiFi network name |
 | 4 | IP | Bot's IP address |
-| 5 | Hostname | DNS hostname |
+| 5 | Hostname | mDNS hostname |
 | 6 | UDP port | 24642 (fixed) |
-| 7 | WebSocket port | 81 (fixed) |
-| 8 | HTTP port | 80 (fixed) |
 | 9 | Master | `REG: XXXXX` when no master registered² — or master's IP when one is active |
 
 ¹ Title row colours:
@@ -65,11 +66,11 @@ The main diagnostic screen, refreshed every **500 ms**. It is divided into five 
 
 ### Panel 2 — Communication Counters  *(middle of screen)*
 
-Three rows showing live packet counts for each transport:
+Live packet counts for the UDP transport:
 
 | Column | Content |
 |---|---|
-| Services | Transport name (UDP / Web / WSocket) |
+| Services | Transport name (UDP) |
 | #in | Frames received since boot |
 | #out | Frames sent since boot |
 | #drop | Frames dropped (parse errors, auth failures) |
@@ -124,7 +125,20 @@ A vertical battery-shaped icon filled from the bottom up:
 
 ---
 
-## Screens 2 – 5 — Log Screens
+## Screen 2 — Sensors
+
+Shows a 4-panel live sensor dashboard:
+
+- Top panel: HuskyLens detection field (320x240 source scaled to 240x180) with block and arrow overlays
+- Middle panel: Lidar heatmaps
+- Bottom-left panel: Accelerometer X/Y/Z and norm `|a| = sqrt(x^2 + y^2 + z^2)`
+- Bottom-right panel: Geomag X/Y/Z, norm `|B| = sqrt(x^2 + y^2 + z^2)`
+
+Panel titles are used as the online state indicator; no `OFFLINE`/`NO DATA` text is shown inside panels.
+
+---
+
+## Screens 3 – 6 — Log Screens
 
 All four log screens share the same layout:
 
@@ -144,10 +158,10 @@ The screen only redraws when the attached logger receives a new entry (version-b
 
 | Screen | Logger | Typical content |
 |---|---|---|
-| 2: App Log | `bot_logger` | Incoming commands, registration events, heartbeats |
-| 3: Svc Log | `svc_logger` | Service start/stop, WiFi state changes |
-| 4: Debug Log | `debug_logger` | Verbose protocol traces (enabled with `VERBOSE_DEBUG`) |
-| 5: ESP Log | `esp_logger` | Raw ESP-IDF system messages |
+| 3: App Log | `bot_logger` | Incoming commands, registration events, heartbeats |
+| 4: Svc Log | `svc_logger` | Service start/stop, WiFi state changes |
+| 5: Debug Log | `debug_logger` | Verbose protocol traces (enabled with `VERBOSE_DEBUG`) |
+| 6: ESP Log | `esp_logger` | Raw ESP-IDF system messages |
 
 ---
 
@@ -162,8 +176,6 @@ The three **NeoPixel RGB LEDs** (indices 0 – 2) on the K10 board are used duri
 | 🟢 Green *(brief flash)* | Service started successfully |
 | ⚫ Off | Startup failed — or normal idle state |
 
-LEDs 1 and 2 are available for user control via `LEDService` binary protocol commands (see [binary-protocol.md](binary-protocol.md)).
-
 ---
 
-*See also: [architecture.md](architecture.md) · [web-ui.md](web-ui.md) · [quickstart.md](quickstart.md)*
+*See also: [quickstart](quickstart.html)*

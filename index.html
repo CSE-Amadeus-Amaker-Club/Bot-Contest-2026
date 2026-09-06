@@ -2,14 +2,92 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="0; url=./quickstart.html">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Redirecting...</title>
-  <script>
-    window.location.replace("./quickstart.html");
-  </script>
+  <title>K10 Bot Participant Guide</title>
+  <link rel="stylesheet" href="./amaker.css">
+  <link rel="stylesheet" href="./contest.css">
 </head>
 <body>
-  <p>Redirecting to <a href="./quickstart.html">quickstart.html</a>...</p>
+  <div class="page-shell">
+    <div class="docs-nav">
+      <a href="bot-contest-guide.html">aMaker Contest</a>
+      <a href="quickstart.html">Quickstart</a>
+      <a href="board-ui.html">Board UI</a>
+      <a href="communication.html">Communication</a>
+      <a href="binary-protocol.html">Binary Protocol</a>
+      <a href="ai-agent-readme.html">AI Coding References</a>
+    </div>
+
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="hero-kicker">// Participant Guide</p>
+        <p>Everything you need to build a K10 Bot, write its controller, and enter the aMaker Club contest.</p>
+        <div class="hero-actions" aria-hidden="true">
+          <span>Build</span>
+          <span>Code</span>
+          <span>Fight</span>
+        </div>
+      </div>
+
+      <aside class="hero-card">
+        <strong>Start Here</strong>
+        <p>Read the contest rules first, assemble and check the bot, then connect a controller over UDP.</p>
+      </aside>
+    </section>
+
+    <section class="content-frame">
+      <div class="help-hub">
+        <div class="hub-intro">
+          <p>Follow the four paths below. The detailed pages and Markdown references stay focused on one job each, so the same technical facts do not need to be maintained in multiple places.</p>
+        </div>
+
+        <div class="hub-grid">
+          <a href="bot-contest-guide.html" class="hub-card">
+            <h3>1. Understand the contest</h3>
+            <p>Rules, rounds, scoring context, supplied parts, bot constraints, and the balloon-defense challenge.</p>
+          </a>
+
+          <a href="ai-wiring.html" class="hub-card">
+            <h3>2. Build the bot</h3>
+            <p>Wire the boards, servos, sensors, battery, and LiDAR safely, then use the Board UI to check the result.</p>
+          </a>
+
+          <a href="quickstart.html" class="hub-card">
+            <h3>3. Code the controller</h3>
+            <p>Connect to Wi-Fi, register with the screen token, maintain the heartbeat, and send your first command.</p>
+          </a>
+
+          <a href="ai-agent-readme.html" class="hub-card">
+            <h3>4. Use the AI Markdown set</h3>
+            <p>Give an AI coding agent the checklist, UDP client pattern, service map, capabilities, and wiring references.</p>
+          </a>
+        </div>
+
+        <div class="hub-footer">
+          <p><strong>Technical references:</strong></p>
+          <ul>
+            <li><a href="ai-mandatory-checklist.html">Client checklist</a></li>
+            <li><a href="ai-udp-client.html">UDP client example</a></li>
+            <li><a href="ai-services.html">Service map</a></li>
+            <li><a href="ai-sensors.html">Sensors and UDP availability</a></li>
+            <li><a href="binary-protocol.html">Binary protocol</a></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <style>
+    .help-hub { max-width: 100%; }
+    .hub-intro { margin-bottom: 2rem; font-size: 1.05rem; line-height: 1.6; }
+    .hub-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 3rem; }
+    .hub-card { display: block; padding: 1.5rem; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; text-decoration: none; color: inherit; transition: all 0.2s; }
+    .hub-card:hover { border-color: #4a90e2; background: #f5f9ff; box-shadow: 0 2px 8px rgba(74, 144, 226, 0.1); transform: translateY(-2px); }
+    .hub-card h3 { margin: 0 0 0.5rem; font-size: 1.1rem; color: #2c3e50; }
+    .hub-card p { margin: 0; font-size: 0.95rem; color: #666; line-height: 1.5; }
+    .hub-footer { margin-top: 2rem; padding-top: 2rem; border-top: 1px solid #eee; }
+    .hub-footer ul { display: flex; flex-wrap: wrap; gap: 2rem; padding: 0; list-style: none; }
+    .hub-footer a { color: #4a90e2; text-decoration: none; }
+  </style>
 </body>
 </html>

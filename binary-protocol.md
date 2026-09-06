@@ -1,8 +1,8 @@
 # Binary Protocol Reference
 
-Complete command reference for the K10 bot binary protocol.  
-All commands apply to **UDP port 24642**, **WebSocket port 81**, and **BLE NUS** equally.  
-See [communication.md](communication.md) for transport details, [quickstart.md](quickstart.md) for the minimal flow.
+Complete command reference for the aMaker bot binary protocol.  
+All commands apply to **UDP port 24642**.
+See [communication](communication.html) for transport details, [quickstart](quickstart.html) for the minimal flow.
 
 ---
 
@@ -28,7 +28,7 @@ action_byte = (service_id << 4) | cmd_id
 | service_id | 7–4  | 0–15   |
 | cmd_id     | 3–0  | 0–15   |
 
-**Example:** `0x24` = service 0x02 (MotorServo), command 0x04 (SET_SERVOS_ANGLE)
+**Example:** `0x24` = service 0x02 (Servo), command 0x04 (SET_SERVOS_ANGLE)
 
 ---
 
@@ -74,22 +74,11 @@ Most write commands require the sender to be the registered master.
 
 ---
 
-## Service 0x02 — MotorServoService
+## Service 0x02 — Servo
 
-Controls 4 DC motors and 6 servo channels on the DFR1216 expansion board.
+ Connected on the servo pins S0..S6 on the expansion board.
 
 ### Channel encoding
-
-**Motors** — 1-indexed hardware, 0-indexed in the mask:
-
-| Bit | Motor |
-|-----|-------|
-| 0   | Motor 1 |
-| 1   | Motor 2 |
-| 2   | Motor 3 |
-| 3   | Motor 4 |
-
-`MOTOR_MASK_ALL = 0x0F`
 
 **Servos** — 0-indexed throughout:
 
@@ -113,12 +102,10 @@ Mixing angle and speed commands on the wrong servo type returns `resp_invalid_pa
 
 | Action | Name                   | Request payload                             | Response                                                        | Notes                                         |
 |--------|------------------------|---------------------------------------------|-----------------------------------------------------------------|-----------------------------------------------|
-| `0x21` | SET_MOTORS_SPEED       | `[motor_mask][speed: i8]`                   | `[0x21][status]`                                               | Speed: −100 to +100. Positive = forward       |
 | `0x22` | SET_SERVO_TYPE         | `[servo_mask][type: u8]`                    | `[0x22][status]`                                               | type > 2 → `resp_invalid_values`              |
 | `0x23` | SET_SERVOS_SPEED       | `[servo_mask][speed: i8]`                   | `[0x23][status]`                                               | Continuous servos only; −100 to +100          |
 | `0x24` | SET_SERVOS_ANGLE       | `[servo_mask][angle_hi][angle_lo]`          | `[0x24][status]`                                               | Big-endian signed i16; −360 to +360           |
 | `0x25` | INCREMENT_SERVOS_ANGLE | `[servo_mask][delta_hi][delta_lo]`          | `[0x25][status]`                                               | Big-endian signed i16 delta; clamped to type range |
-| `0x26` | GET_MOTORS_SPEED       | `[motor_mask]`                              | `[0x26][0x00][motor_mask][speed₀][speed₁…: i8]`               | One i8 per set bit, LSB-first                 |
 | `0x27` | GET_SERVOS_ANGLE       | `[servo_mask]`                              | `[0x27][0x00][servo_mask][ang₀_hi][ang₀_lo][ang₁_hi]…`        | Big-endian i16 per set bit, LSB-first         |
 | `0x28` | STOP_ALL_MOTORS        | *(none)*                                    | `[0x28][status]`                                               | No master check; emergency stop               |
 | `0x29` | GET_BATTERY            | *(none)*                                    | `[0x29][0x00][level: u8]`                                      | 0–100 %                                       |
@@ -152,76 +139,14 @@ for bit in range(4):
 
 ---
 
-## Service 0x03 — DFR1216Board
+## Service 0x03 — Expansion board
 
-Controls the onboard LEDs and battery monitoring on the DFR1216 expansion board.
-
-> **Index vs. mask:** This service uses a **`led_index` integer (0–2)**, not a bitmask.  
-> Compare with LEDService (0x05) which uses a bitmask.
+Battery monitoring.
 
 | Action | Name          | Request payload                            | Response                                               | Notes                               |
 |--------|---------------|--------------------------------------------|--------------------------------------------------------|-------------------------------------|
-| `0x31` | SET_LED_COLOR | `[led_index: u8][r][g][b][brightness]`     | `[0x31][status]`                                       | led_index > 2 → `resp_invalid_values` |
-| `0x32` | TURN_OFF_LED  | `[led_index: u8]`                          | `[0x32][status]`                                       | led_index > 2 → `resp_invalid_values` |
-| `0x33` | TURN_OFF_ALL  | *(none)*                                   | `[0x33][status]`                                       |                                     |
-| `0x34` | GET_LED_STATUS | *(none)*                                  | `[0x34][0x00][JSON string]`                            | See format below                    |
+`                            | See format below                    |
 | `0x35` | GET_BATTERY   | *(none)*                                   | `[0x35][0x00][level: u8]`                              | 0–100 %                             |
-
-### GET_LED_STATUS JSON format
-
-```json
-{
-  "leds": [
-    { "id": 0, "red": 255, "green": 0, "blue": 128 },
-    { "id": 1, "red": 0,   "green": 0, "blue": 0   },
-    { "id": 2, "red": 0,   "green": 64,"blue": 0   }
-  ]
-}
-```
-
-The JSON payload starts at byte[2] (after action + resp_ok). Parse as UTF-8.
-
----
-
-## Service 0x05 — LEDService
-
-Controls the 3 K10 NeoPixels and 2 DFR1216 WS2812 LEDs through a unified **bitmask**.
-
-### LED mask layout
-
-| Bit | LED                        |
-|-----|----------------------------|
-| 0   | K10 NeoPixel 0             |
-| 1   | K10 NeoPixel 1             |
-| 2   | K10 NeoPixel 2             |
-| 3   | DFR1216 WS2812 LED 0       |
-| 4   | DFR1216 WS2812 LED 1       |
-
-Convenience constants: `MASK_ALL_K10 = 0x07`, `MASK_ALL_DFR = 0x18`, `MASK_ALL = 0x1F`
-
-### Commands
-
-| Action | Name          | Request payload                                    | Response                                                      | Notes                      |
-|--------|---------------|----------------------------------------------------|---------------------------------------------------------------|----------------------------|
-| `0x51` | SET_COLOR     | `[led_mask][r: u8][g: u8][b: u8][brightness: u8]` | `[0x51][status]`                                             | Frame length must be ≥ 6   |
-| `0x52` | TURN_OFF      | `[led_mask]`                                       | `[0x52][status]`                                             |                            |
-| `0x53` | TURN_OFF_ALL  | *(none)*                                           | `[0x53][status]`                                             |                            |
-| `0x54` | GET_COLOR     | `[led_mask]`                                       | `[0x54][0x00][led_mask][r₀][g₀][b₀][br₀][r₁][g₁][b₁][br₁]…`| 4 bytes per set bit, LSB-first |
-
-### GET_COLOR response parsing
-
-```python
-# Example: led_mask=0x05 (bits 0 and 2) → 2 × 4 bytes after [action][ok][mask]
-mask = 0x05
-leds = []
-offset = 3  # skip action, resp_ok, mask
-for bit in range(5):
-    if mask & (1 << bit):
-        r, g, b, br = resp[offset:offset+4]
-        leds.append({'bit': bit, 'r': r, 'g': g, 'b': b, 'brightness': br})
-        offset += 4
-```
-
 ---
 
 ## Service 0x06 — AmakerBotUIService (remote screen control)
@@ -249,9 +174,9 @@ Controls which TFT screen is shown on the K10 display.
 | SET_SERVO_TYPE  | GET_MOTORS_SPEED       |
 | SET_SERVOS_SPEED| GET_SERVOS_ANGLE       |
 | SET_SERVOS_ANGLE| GET_BATTERY (any svc)  |
-| INCREMENT_SERVOS_ANGLE | GET_LED_STATUS  |
-| SET_SERVO270_ANGLE | SET_LED_COLOR (DFR) |
-| SET_COLOR (LED) | TURN_OFF_ALL           |
+| INCREMENT_SERVOS_ANGLE |                 |
+| SET_SERVO270_ANGLE |                     |
+| SET_COLOR (LED) |                        |
 | TURN_OFF (LED)  |                        |
 
 ---
@@ -290,4 +215,4 @@ resp = send_udp(bytes([0x28]))
 
 ---
 
-*See also: [quickstart.md](quickstart.md) · [communication.md](communication.md) · [architecture.md](architecture.md)*
+*See also: [quickstart](quickstart.html) · [communication](communication.html)*

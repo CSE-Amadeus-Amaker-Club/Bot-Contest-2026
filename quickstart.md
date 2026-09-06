@@ -8,7 +8,7 @@ The smallest possible program to take control of the bot and move a servo.
 Plug the board with screen in the slot near the battery with the screen facing outside an camera the inside.
 Switch on the board.
 Once booted, your board will start its own **wifi access point** wich name is shown on screen, and password is **amaker-club**.
-Connect to it with your laptop, and hopen your board home page at [http://192.168.4.1](http://192.168.4.1)
+Connect to it with your laptop. Control commands are sent directly to the board with UDP on port **24642**.
 
 ## 1. Find the token
 
@@ -51,86 +51,19 @@ All frames start with one **action byte** = `(service_id << 4) | command_id`.
 
 ---
 
-## 4. Transport options
+## 4. Transport
 
 | Transport | Host | Port | Endpoint |
 |---|---|---|---|
-| WebSocket | `<bot-ip>` | **81** | `/ws` |
 | UDP | `<bot-ip>` | **24642** | — |
-| HTTP | `<bot-ip>` | **80** | `/botserver?cmd=<hex>` |
-| BLE (NUS) | `<bot-name>` | — | Nordic UART Service (write RX char) |
 
 ---
 
-## 5. Minimal Python example — WebSocket
+## 5. Minimal Python example — UDP
 
 ```python
 #!/usr/bin/env python3
 """Minimal K10 Bot controller: register, move servo 0, unregister."""
-# pip install websocket-client
-
-import time
-import websocket  # websocket-client
-
-BOT_IP    = "192.168.1.100"  # ← change to your bot's IP
-BOT_PORT  = 81
-TOKEN     = "D4AAA"          # ← change to the token on the TFT screen
-
-def send(ws, data: list[int]):
-    ws.send_binary(bytes(data))
-
-def recv(ws) -> list[int]:
-    ws.settimeout(1.0)
-    try:
-        raw = ws.recv()
-        return list(raw if isinstance(raw, bytes) else raw.encode())
-    except Exception:
-        return []
-
-ws = websocket.create_connection(f"ws://{BOT_IP}:{BOT_PORT}/ws")
-
-# ① Register as master
-send(ws, [0x41] + list(TOKEN.encode()))
-resp = recv(ws)
-assert resp[1] == 0x00, f"Register failed: {resp}"
-print("Registered ✓")
-
-# ② First heartbeat (starts the 50 ms watchdog)
-send(ws, [0x43])
-last_hb = time.time()
-
-# ③ Attach servo 0 as continuous rotation
-send(ws, [0x22, 0x01, 0x02])  # mask=0x01 (ch0), type=2 (ROTATIONAL)
-recv(ws)
-
-# ④ Spin servo 0 forward for 2 seconds, sending heartbeats
-end = time.time() + 2.0
-while time.time() < end:
-    send(ws, [0x23, 0x01, 100])  # SET_SERVOS_SPEED ch0 speed=+100
-    if time.time() - last_hb >= 0.030:
-        send(ws, [0x43])          # heartbeat
-        last_hb = time.time()
-    time.sleep(0.010)
-
-# ⑤ Stop servo 0
-send(ws, [0x23, 0x01, 0])
-recv(ws)
-
-# ⑥ Unregister
-send(ws, [0x42])
-recv(ws)
-print("Unregistered ✓")
-
-ws.close()
-```
-
----
-
-## 6. Minimal Python example — UDP
-
-```python
-#!/usr/bin/env python3
-"""Same sequence over UDP (fire-and-forget, no connection needed)."""
 import socket, time
 
 BOT_IP   = "192.168.1.100"  # ← change
@@ -185,7 +118,7 @@ sock.close()
 
 ---
 
-## 7. Channel mask cheat-sheet
+## 6. Channel mask cheat-sheet
 
 `servo_mask` is a bitmask — set bit *n* to target servo channel *n*.
 
@@ -209,4 +142,4 @@ mask(2, 3)   # → 0x0C
 
 ---
 
-*More commands: [binary-protocol.md](binary-protocol.md) · Full transport details: [communication.md](communication.md)*
+*More commands: [binary-protocol](binary-protocol.html) · Full transport details: [communication](communication.html)*

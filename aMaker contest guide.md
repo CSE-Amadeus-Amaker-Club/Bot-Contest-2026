@@ -3,24 +3,20 @@ We strongly recommend to read this document before jumping in contest :)
 
 #  Introduction
 
-This document is your practical guide for the D4A contest.
+This document is your practical guide for the aMaker contest.
 It covers the essential steps to build a functional bot using the elements and win the contest.
 
 # Bill of material
 You should have received: 
-* 1 microcontroller board with screen and camera
-![board-ui.png](board-ui.png)
+* 1 microcontroller board (with screen and camera)
 * 1 extension board, with a battery holder, lots of pins, **power switch** and **USB connector** for battery charging.
-![DFR1216Board.svg](DFR1216Board.svg)
 * 1 battery 18650 (loaded). **Be extremely carefull with polarity when plugin the battery**
 * 1 set of lego bricks with plates, wheels, axles, tracks, gears. ![Bill%20of%20material%20pieces.jpg](Bill%20of%20material%20pieces.jpg) ~[book_chapters.png](book_chapters.png)
 * 2 servo motors : green ones 
 ![svgreen64.png](svgreen64.png)
 * 2 angular servos : grey  ones ![svgrey64.png](svgrey64.png)
-
 * 1 toothpicks
 * 1 balloon
-
 
 
 # Contest objective
@@ -33,8 +29,13 @@ You'll have to design and assemble your own bot with the provided pieces.
 Electronics is very easy you just have to 
 - plug the microcontroller board in the extension board
 - plug the servos you want to use to extension board pins S0 to S5 at your convenience.
+- plug the i2c sensors and huskylens to **I2C 3.3V** 
+- connect the LIDAR wires : green->p0 and blue->p1 (left side), red->5V black->GND (right side)
+![wiring.png](wiring.png)
+When powered ** NEVER EVER LOOK AT LIDAR IN FRONT OF CAMERA **: it emits **invisible 905nm laser beams** and has no class 1 certification. 
 
-Controlling your bot will be done via your computer using your keyboard, mouse, joystick or pure code. 
+
+Controlling your bot will be done via your computer using autonomous code,  keyboard, mouse,  joystick... 
 
 
 ## Building your bot
@@ -42,7 +43,8 @@ Controlling your bot will be done via your computer using your keyboard, mouse, 
 ### Contraints
 1. The electronics parts have to be protected from toothpicks (using transparent sheet or lego pieces)
 1. The camera field of view must be free of obstacle (~90 degrees)
-1. The balloon has to be firmly mounted in a location that can be accessed to other bots : it must be in contact with the ground.
+1. The LIDAR field of view must be free of obstacle (~120 degrees horizontally)
+1. The balloon will be inflated and mounted **by your oppenent** ;)
 
 
 ### Moving your bot
@@ -53,18 +55,8 @@ One motor on left track, one right track.
 Motors running in same direction => going forward / backward.
 Motors running in opposite direction => turning on itself.
 
-#### Dicycle 
-One motor on left wheel, one on right wheel, a third free wheel for stability
-Motors running in same direction => going forward / backward.
-Motors running in opposite direction => turning on itself.
-
-#### Tricycle 
-One motor on the differential in and two wheels on the differential out, one angular servo on direction wheel.
-Close but simplier than a car.
-
-#### Car
-One motor on the differential in and two wheels on the differential out, angular servo controls two direction wheels.
-Like a car. 
+#### Car mode
+One motor on the differential in and two wheels on the differential out, angular servo controls two direction wheels. Like a car. 
 
 #### ... 
 There are plenty of other ways to nove your bot: be creative.
@@ -92,7 +84,7 @@ There are lots of ways to mount your tooth picks:
 - ...
 
 ### Mounting your balloon
-You balloon has to be fairly mounted in a location that can be accessed to other bots. Loosing your balloon is a cause of defeat.
+You balloon will be fairly mounted by your oppenent.
 
 
 ### Tips an tricks
@@ -110,7 +102,6 @@ You balloon has to be fairly mounted in a location that can be accessed to other
 The microcontroller is provided with a custom firmware for the contest.
 
 #### Setup WiFi (optional)
-
 On first boot, if no known WiFi is accessible, board will open its own access point `amaker-XXXXX` and show its name on screen. Connect to it using password `amaker-club`.
 Once connected, open page [http://192.168.4.1](http://192.168.4.1)
 
@@ -121,24 +112,18 @@ The home page allows to configure a "public" WiFi access point to use:
 
 #### Website (port 80)
 The microcontroller exposes a website on port 80.
-It exposes the Wifi setup page, the camera view page, a the online javascript controller coding page.
-
-#### WebSocket (port 81)
-The microcontroller exposes a website on port 81.
-Only for 
+It exposes the WiFi setup page, camera view page, and build information page.
 
 #### UDP (port 24642)
 The microcontroller exposes a UDP service on port 24642.
 
 ### Coding your controller
 
-#### Easy mode
-You can code all your interactions from keyboard and joystick to board using thonline javascript. Code example are provided. 
-
 #### Code your own client
-You can code your own controller with your own code that will interact via  websocket or UDP with the bot relying on given firmware. 
-No example but but the online javascript. Documentation of service is provided.
+You will code your own controller that interacts with the bot firmware via UDP
+Protocol documentation is provided in markdown for your prefered LLM :)
 
-#### Code your own firmware 
-You can code your own firmware using VisualStudio and PlatformIO, but you'd better forget about cloning the code repo a starting this.
+#### Example code
+A python client is present in repo.
+
 

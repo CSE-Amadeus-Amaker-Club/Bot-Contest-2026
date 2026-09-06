@@ -157,7 +157,7 @@ a {
   border-radius: var(--radius);
   background:
     linear-gradient(135deg, rgba(7, 12, 20, 0.98), rgba(16, 23, 39, 0.94)),
-    url("./brickbrawl.png") center/cover no-repeat;
+    /* url("./brickbrawl.png") center/cover no-repeat; */
   box-shadow: var(--shadow);
   overflow: hidden;
 }

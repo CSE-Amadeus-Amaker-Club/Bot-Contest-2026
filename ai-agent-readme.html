@@ -3,37 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Binary Protocol — K10 Bot</title>
+  <title>AI Agent Setup — Developer Guide</title>
   <link rel="stylesheet" href="./amaker.css">
   <link rel="stylesheet" href="./contest.css">
 </head>
 <body>
   <div class="page-shell">
+
     <div class="docs-nav">
-      <a href="bot-contest-guide.html">aMaker Contest</a>
-      <a href="quickstart.html">⚡ Quickstart</a>
-      <a href="board-ui.html">📟 Board UI</a>
-      <a href="communication.html">📡 Communication</a>
-      <a href="binary-protocol.html" class="active">🔢 Binary Protocol</a>
-      <a href="ai-agent-readme.html">AI Coding References</a>
+      <a href="./bot-contest-guide.html">aMaker Contest</a>
+      <a href="./quickstart.html">⚡ Quickstart</a>
+      <a href="./board-ui.html">📟 Board UI</a>
+      <a href="./communication.html">📡 Communication</a>
+      <a href="./binary-protocol.html">🔢 Binary Protocol</a>
+      <a href="ai-agent-readme.html" class="active">AI Coding References</a>
     </div>
 
     <section class="hero">
       <div class="hero-copy">
-        <p class="hero-kicker">// CSE Amadeus' aMaker Club • Robot Combat League</p>
-        <h1>Binary Protocol</h1>
-        <p>Drop to the wire format, inspect frame structure, and understand the low-level commands that keep the robot responsive.</p>
+        <p class="hero-kicker">// Developer Guide</p>
+        <h1>AI Agent Setup</h1>
+        <p>Entry point for building AI clients and autonomous controllers. Master the registration flow and command dispatch model.</p>
         <div class="hero-actions" aria-hidden="true">
-          <span>Pack</span>
-          <span>Send</span>
-          <span>Parse</span>
-          <span>Validate</span>
+          <span>Register</span>
+          <span>Heartbeat</span>
+          <span>Command</span>
+          <span>Read</span>
         </div>
       </div>
 
       <aside class="hero-card">
-        <strong>Protocol Brief</strong>
-        <p>The arena shell carries over cleanly here, giving the lower-level transport docs the same visual identity as the rest of the suite.</p>
+        <strong>Setup Brief</strong>
+        <p>Learn how AI agents discover the bot, register as master, maintain the heartbeat, and dispatch commands safely.</p>
       </aside>
     </section>
 
@@ -44,7 +45,7 @@
 
   <script src="./marked.min.js"></script>
   <script>
-    fetch('./binary-protocol.md')
+    fetch('./ai-agent-readme.md')
       .then(r => r.text())
       .then(md => {
         const target = document.getElementById('md-content');

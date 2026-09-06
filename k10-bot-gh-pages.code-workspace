@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"fetch\\('\\./[^']+\\.md": true,
+			"test": true,
+			"printf": true,
+			"diff": true,
+			"set": true,
+			"/^python3 -m http\\.server 8765$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}
