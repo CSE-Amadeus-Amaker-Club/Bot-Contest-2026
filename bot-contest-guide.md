@@ -16,7 +16,7 @@ There will be several rounds where your bots will evolved in an arena, agains on
 # Bill of material
 You should have received: 
 * 1 microcontroller board (with screen and camera)
-* 1 LiDAR sensor
+* 1 LiDAR sensor that ** emits invisible lazer beam - DO NOT TARGET EYES WHEN POWERED**
 * 1 Accelerator sensor
 * 1 Geomagnetic sensor
 * 1 extension board, with a battery holder, lots of pins, **power switch** and **USB connector** for battery charging.
@@ -36,7 +36,7 @@ Electronics is very easy ! You just have to
 - plug the i2c sensors and huskylens to **I2C 3.3V** 
 - connect the LIDAR wires : green->p0 and blue->p1 (left side), red->5V black->GND (right side)
 ![wiring.png](wiring.png)
-SAFETY FIRST L when powered **NEVER EVER LOOK AT LIDAR IN FRONT OF CAMERA** : it emits **invisible 905nm laser beams** and has no class 1 certification. The LIDAR must always directed to the "bottom"
+SAFETY FIRST when powered **NEVER EVER LOOK AT LIDAR IN FRONT OF CAMERA** : it emits **invisible 905nm laser beams** and has no class 1 certification. The LIDAR must always directed to the "bottom".
 
 Controlling your bot will be done via your computer using autonomous code,  keyboard, mouse,  joystick... 
 
@@ -98,7 +98,7 @@ Don't think about cheating here :)
 - Use the USB-c connector to charge the battery
 - Let the power switch accessible
 - Be iterative
-- If you lack ideas, have a look at the book [The LEGO power functions idea book., Isogawa, Yoshihito](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up) : there are lots of ideas ![d4a-contest-guide-ideas.png](d4a-contest-guide-ideas.png).
+- If you lack ideas, have a look at the book [The LEGO power functions idea book., Isogawa, Yoshihito](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up) : there are lots of ideas ![contest-guide-ideas.png](contest-guide-ideas.png).
 
 
 ## Coding part
@@ -121,4 +121,4 @@ You will code your own controller that interacts with the bot firmware via UDP. 
 Start from [quickstart](quickstart.html), then use [communication](communication.html) and [binary-protocol](binary-protocol.html) for the full protocol details.
 
 #### tips
-A python client is present in repo :)
+A lazy/cheater demo client is present in repo.

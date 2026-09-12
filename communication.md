@@ -1,6 +1,6 @@
 # Communication Guide
 
-The K10 Bot uses UDP to transport binary control messages. This guide describes the UDP control path, master ownership, heartbeat timing, and diagnostics.
+The K10 Bot currently exposes two active transports that both map to the same bot command set.
 
 ---
 
@@ -8,32 +8,33 @@ The K10 Bot uses UDP to transport binary control messages. This guide describes 
 
 ```
 Controller  ──────────────────────────────────┐
-  │  UDP :24642         (Core 0, max priority) │
-    │                                          │  →  AmakerBotService → service handlers
+  │  UDP :24642         (Core 0, max priority) │  →  AmakerBotService → service handlers
+  │  HTTP :80/botserver (Core 1, normal prio)  │
 Controller  ──────────────────────────────────┘
 ```
 
-| | UDP |
-|---|---|
-| **Port** | 24642 |
-| **Endpoint** | — |
-| **Protocol** | Binary |
-| **Connection** | Connectionless |
-| **Reply** | Same source IP and source port |
-| **FreeRTOS core** | 0 (max priority) |
-| **Multiple clients** | Yes; master ownership is still single-IP |
-| **Best for** | Real-time control and Python scripts |
+| | UDP | HTTP |
+|---|---|---|
+| **Port** | 24642 | 80 |
+| **Endpoint** | — | `/botserver?cmd=<hex>` |
+| **Protocol** | Binary | Hex-encoded GET |
+| **Connection** | Connectionless | One request per frame |
+| **Reply** | Same source port | HTTP response body |
+| **FreeRTOS core** | 0 (max priority) | 1 (normal priority) |
+| **Multiple clients** | Yes (last sender wins) | Yes |
+| **Best for** | Real-time control, Python scripts | Browser pages, curl/debugging |
 
 ---
 
 ## Sender identity and master control
 
-Master registration is **per-sender-IP**.  
-The UDP transport extracts the sender IP and passes it to `AmakerBotService::dispatch()`:
+Master registration is **per-sender-IP**.
+Each transport extracts sender IP and passes it to `AmakerBotService::dispatch()`:
 
-- **UDP** — `packet.remoteIP()` (the source IP of the UDP datagram)
+- **UDP** — `packet.remoteIP()` (source IP of the datagram)
+- **HTTP** — HTTP client remote IP
 
-Only one IP can hold master control at a time. A second `REGISTER` from a *different* IP fails with `resp_operation_failed (0x03)` until the current master unregisters or its heartbeat times out.
+Only one IP can hold master control at a time. A second `REGISTER` from a different IP fails with `resp_operation_failed (0x03)` until current master unregisters or heartbeat times out.
 
 ---
 
@@ -41,11 +42,11 @@ Only one IP can hold master control at a time. A second `REGISTER` from a *diffe
 
 ### Characteristics
 
-- **Library**: `AsyncUDP` (ESP-IDF)
-- **Core**: 0 at maximum FreeRTOS priority — lowest possible latency
+- **Library**: `AsyncUDP`
+- **Core**: 0 at maximum FreeRTOS priority
 - **Delivery**: fire-and-forget, no connection state
-- **Reply**: sent back to the source IP + source port of the incoming datagram
-- **Heartbeat**: bot bot-side timeout is **50 ms**; send every ≤ 30 ms to be safe
+- **Reply**: sent back to source IP + source port
+- **Heartbeat**: watchdog timeout is **50 ms**; send every <= 30 ms to stay safe
 
 ### Frame exchange
 
@@ -55,52 +56,115 @@ Controller                          Bot (Core 0)
     │◄─ [response] ───────────────────│  (only if response is non-empty)
 ```
 
-Heartbeat (`0x43`) sends no response at all — this is intentional to keep latency minimal.
+Heartbeat (`0x43`) intentionally has no response payload.
 
 ### Python snippet
 
 ```python
 import socket
+
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(0.5)
 
-# Send raw binary
+# REGISTER token "UROCK" -> [0x41, 'D', '4', 'A', 'A', 'A']
 sock.sendto(bytes([0x41, 0x44, 0x34, 0x41, 0x41, 0x41]), ("192.168.1.100", 24642))
-
-# Read response
 data, _ = sock.recvfrom(64)
-print(hex(data[0]), hex(data[1]))  # action echo, response code
+print(hex(data[0]), hex(data[1]))
 ```
 
-### Notes
+---
 
-- No connection handshake — the first packet can be the `REGISTER` frame
-- If the router does NAT, the bot replies to the *external* port of the sender; ensure your firewall does not block it
-- Multiple controllers can send UDP packets; whichever registers first holds master control
+## Transport 2 — HTTP (`/botserver`)
+
+### Characteristics
+
+- **Library**: `ESPAsyncWebServer`
+- **Core**: 1 at normal priority
+- **Method**: `GET /botserver?cmd=<hex>`
+- **Frame encoding**: bytes encoded as contiguous hex string (no separators)
+- **Response encoding**: raw binary (`application/octet-stream`)
+
+### HTTP status codes
+
+| Situation | HTTP status | Body |
+|---|---|---|
+| Frame dispatched, non-empty response | **200** | Raw binary response |
+| Frame dispatched, empty response (heartbeat/reboot) | **204** | Empty |
+| Missing `cmd` parameter | **400** | Plain text error message |
+| Invalid `cmd` hex string | **400** | Plain text error message |
+
+### Static file serving
+
+The same HTTP server also serves static pages from `/www` on LittleFS:
+
+| Path | Source |
+|---|---|
+| `http://<bot-ip>/` | `/www/index.html` |
+| `http://<bot-ip>/control.html` | `/www/control.html` |
+| `http://<bot-ip>/camera.html` | `/www/camera.html` |
+| `http://<bot-ip>/buildinfo.html` | `/www/buildinfo.html` |
+| `http://<bot-ip>/soundservice.html` | `/www/soundservice.html` |
+| `http://<bot-ip>/cam/snapshot` | Live JPEG from camera |
+| `http://<bot-ip>/cam/stream` | MJPEG stream |
+| `http://<bot-ip>/scripts` | Script CRUD API |
+| `http://<bot-ip>/sounds` | Sound storage and playback API |
+
+### Sound HTTP routes
+
+The sound routes are direct HTTP operations, not hex-encoded `/botserver`
+commands:
+
+| Method and path | Success | Failure | Body |
+|---|---|---|---|
+| `GET /sounds` | `200` | - | JSON storage/playback summary |
+| `POST /sounds/<name>` | `200` | `400` | Raw WAV upload; response is plain text |
+| `DELETE /sounds/<name>` | `200` | `404` | Delete while playback is idle |
+| `POST /sounds/<name>/play` | `200` | `404` | Start or replace playback |
+| `POST /sounds/stop` | `200` | - | Stop playback |
+
+The upload body must be the WAV bytes, with a known content length. Upload and
+delete fail while playback is active. See the
+[SoundService guide](../../../docs/user%20guides/SoundService.md) for limits and examples.
+
+### curl examples
+
+```bash
+# REGISTER with token "UROCK" -> hex: 41 44 34 41 41 41
+curl -s "http://192.168.1.100/botserver?cmd=414434414141" | xxd
+
+# HEARTBEAT -> no body, HTTP 204
+curl -s -o /dev/null -w "%{http_code}" "http://192.168.1.100/botserver?cmd=43"
+
+# SET_SERVOS_SPEED servo 0, speed +100 -> hex: 23 01 64
+curl -s "http://192.168.1.100/botserver?cmd=230164" | xxd
+
+# GET_BATTERY -> hex: 29
+curl -s "http://192.168.1.100/botserver?cmd=29" | xxd
+```
 
 ---
 
 ## Concurrent use
 
-Multiple UDP clients can send packets to the board, but only one sender IP can own master control at a time.
+UDP and HTTP can run simultaneously:
 
-- A Python UDP controller can register as master and send heartbeats at 30 ms.
-- Other clients can send read commands such as `GET_BATTERY`, `GET_NAME`, or `PING` without registering.
-
-Only **master-protected commands** (motor/servo write, WiFi change, reboot) enforce the single-master rule. Read commands (`GET_NAME`, `GET_BATTERY`, `PING`) work from any sender without registration.
+- A UDP controller can register and drive motors/servos at low latency.
+- Browser/curl HTTP requests can read status commands.
+- Master-protected commands still enforce single-master ownership by sender IP.
+- Static browser pages must register master through `0x41` first, then send later `/botserver` calls from the same client IP. The current firmware does not implement an `X-Bot-Token` header.
 
 ---
 
 ## Diagnostics
 
-The UDP server exposes live counters accessible from the **App Info** screen (Screen 1) on the TFT display and via `getRxCount()` / `getTxCount()` / `getDroppedCount()` in C++:
+App Info screen counters expose transport activity:
 
 | Counter | Meaning |
 |---|---|
 | `#in` | Frames/requests successfully dispatched |
 | `#out` | Responses sent |
-| `#drop` | Frames rejected, for example zero-length or malformed packets |
+| `#drop` | Frames rejected (bad hex, malformed payload, etc.) |
 
 ---
 
-*See also: [binary-protocol](binary-protocol.html) · [quickstart](quickstart.html)*
+*See also: [binary-protocol.md](binary-protocol.md) · [quickstart.md](quickstart.md) · [architecture.md](architecture.md) · [ai-agent-readme.md](ai-agent-readme.md)*

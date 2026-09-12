@@ -13,7 +13,7 @@ Use this checklist before driving motors, servos, LEDs, or changing board settin
 
 1. Send `REGISTER` action `0x41` with the token as ASCII bytes.
 2. Check response byte 1 is `0x00`.
-3. Start sending `HEARTBEAT` action `0x43` every ~30 ms (the bot enforces a 50 ms watchdog timeout).
+3. Start sending `HEARTBEAT` action `0x43` every 25-30 ms.
 4. Configure servo types before commanding servo motion.
 5. Calibrate sensors when needed before relying on their readings.
 6. On error, timeout, or program exit, send a stop command where appropriate.
@@ -30,7 +30,7 @@ These require the sender IP to be registered master:
 | LEDs | Set color, turn off selected LEDs |
 | Sensor configuration | Stream toggles and configuration writes where implemented |
 
-Read-only queries generally do not require master control, but a client should still use one consistent flow for predictable behavior. See [binary-protocol.md](binary-protocol.md#master-protection-summary) for the complete per-command list.
+Read-only queries generally do not require master control, but a client should still use one consistent flow for predictable behavior.
 
 ## Calibration and Setup
 

@@ -35,7 +35,7 @@ All frames start with one **action byte** = `(service_id << 4) | command_id`.
 
 | What | Frame (hex) | Notes |
 |---|---|---|
-| **Register** | `41 <token>` | token = 5 ASCII bytes, e.g. `41 44 34 41 41 41` for "D4AAA" |
+| **Register** | `41 <token>` | token = 5 ASCII bytes, e.g. `41 44 34 41 41 41` for "UROCK" |
 | **Heartbeat** | `43` | no reply sent by the bot |
 | **Unregister** | `42` | |
 | **Attach servo** (continuous) | `22 <mask> 02` | mask bit *n* = servo channel *n* |
@@ -68,7 +68,7 @@ import socket, time
 
 BOT_IP   = "192.168.1.100"  # ← change
 BOT_PORT = 24642
-TOKEN    = "D4AAA"          # ← change
+TOKEN    = "UROCK"          # ← change
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(0.5)

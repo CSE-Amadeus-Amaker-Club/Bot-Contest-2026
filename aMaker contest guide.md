@@ -94,7 +94,7 @@ You balloon will be fairly mounted by your oppenent.
 - Use the USB-c connector to charge the battery
 - Let the power switch accessible
 - Be iterative
-- If you lack ideas, have a look at the book [The LEGO power functions idea book., Isogawa, Yoshihito](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up) : there are lots of ideas ![d4a-contest-guide-ideas.png](d4a-contest-guide-ideas.png).
+- If you lack ideas, have a look at the book [The LEGO power functions idea book., Isogawa, Yoshihito](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up) : there are lots of ideas ![contest-guide-ideas.png](contest-guide-ideas.png).
 
 ## Coding part
 

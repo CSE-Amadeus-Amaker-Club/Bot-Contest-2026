@@ -50,6 +50,7 @@ The main diagnostic screen, refreshed every **500 ms**. It is divided into five 
 | 4 | IP | Bot's IP address |
 | 5 | Hostname | mDNS hostname |
 | 6 | UDP port | 24642 (fixed) |
+| 7 | HTTP port | 80 (fixed) |
 | 9 | Master | `REG: XXXXX` when no master registered² — or master's IP when one is active |
 
 ¹ Title row colours:
@@ -66,11 +67,11 @@ The main diagnostic screen, refreshed every **500 ms**. It is divided into five 
 
 ### Panel 2 — Communication Counters  *(middle of screen)*
 
-Live packet counts for the UDP transport:
+Two rows showing live packet counts for each transport:
 
 | Column | Content |
 |---|---|
-| Services | Transport name (UDP) |
+| Services | Transport name (UDP / Web) |
 | #in | Frames received since boot |
 | #out | Frames sent since boot |
 | #drop | Frames dropped (parse errors, auth failures) |
@@ -130,9 +131,9 @@ A vertical battery-shaped icon filled from the bottom up:
 Shows a 4-panel live sensor dashboard:
 
 - Top panel: HuskyLens detection field (320x240 source scaled to 240x180) with block and arrow overlays
-- Middle panel: Lidar heatmaps
+- Middle panel: Lidar heatmap (64x8 source, rendered as centered 2x2 dots with 1 px spacing)
 - Bottom-left panel: Accelerometer X/Y/Z and norm `|a| = sqrt(x^2 + y^2 + z^2)`
-- Bottom-right panel: Geomag X/Y/Z, norm `|B| = sqrt(x^2 + y^2 + z^2)`
+- Bottom-right panel: Geomag X/Y/Z, norm `|B| = sqrt(x^2 + y^2 + z^2)`, and isometric 3D vector view
 
 Panel titles are used as the online state indicator; no `OFFLINE`/`NO DATA` text is shown inside panels.
 
@@ -176,6 +177,8 @@ The three **NeoPixel RGB LEDs** (indices 0 – 2) on the K10 board are used duri
 | 🟢 Green *(brief flash)* | Service started successfully |
 | ⚫ Off | Startup failed — or normal idle state |
 
+LEDs 1 and 2 are available for user control via `LEDService` binary protocol commands (see [binary-protocol.md](binary-protocol.md)).
+
 ---
 
-*See also: [quickstart](quickstart.html)*
+*See also: [architecture.md](architecture.md) · [web-ui.md](web-ui.md) · [quickstart.md](quickstart.md)*

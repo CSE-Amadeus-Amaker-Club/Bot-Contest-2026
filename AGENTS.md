@@ -24,7 +24,7 @@ Every client **must** follow this exact sequence for master-protected operations
 
 ### 1. Register
 ```
-Request:  [0x41] + TOKEN  (TOKEN = 5 ASCII bytes, e.g., "D4AAA")
+Request:  [0x41] + TOKEN  (TOKEN = 5 ASCII bytes, e.g., "UROCK")
 Response: [0x41] [status]
 ```
 - `status = 0x00` → OK, sender IP is now the registered master
@@ -247,7 +247,7 @@ import socket
 
 BOT_IP = "192.168.1.100"
 BOT_PORT = 24642
-TOKEN = "D4AAA"
+TOKEN = "UROCK"
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(0.5)
@@ -363,7 +363,7 @@ import time
 
 BOT_IP = "192.168.1.100"
 BOT_PORT = 24642
-TOKEN = "D4AAA"
+TOKEN = "UROCK"
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.settimeout(0.5)
@@ -551,7 +551,7 @@ You are generating a K10 bot UDP client. Follow this protocol:
 [Paste Quick Start + Service Architecture + Safety Guardrails + Code Patterns here]
 
 Generate a Python client that:
-1. Registers as master with token "D4AAA"
+1. Registers as master with token "UROCK"
 2. Starts a heartbeat loop (25 ms)
 3. Reads LiDAR distance stream for 5 seconds
 4. Stops motors and unregisters

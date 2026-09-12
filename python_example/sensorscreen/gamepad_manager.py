@@ -7,7 +7,7 @@ import logging
 try:
     import pygame
 except ImportError:
-    pygame = None
+    pygame :type|None = None
 
 import protocol as proto
 from servo_controls import ServoControls
