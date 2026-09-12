@@ -37,6 +37,7 @@ class BotConfig:
     imu_bump_debounce_ms: int = 200
     capture_path: Path | None = None
     servo_types: tuple[int, ...] = (SERVO_TYPE_180,) * SERVO_COUNT
+    servo_angle_limits: tuple[tuple[int, int] | None, ...] = (None,) * SERVO_COUNT
 
 
 def _load_ini(path: Path) -> tuple[dict, dict]:
@@ -81,12 +82,38 @@ def load_config(argv: list[str] | None = None) -> BotConfig:
         parser.error("Bot IP is required: pass --ip or set bot_ip in the config file")
 
     servo_types: list[int] = []
+    servo_angle_limits: list[tuple[int, int] | None] = []
     for channel in range(SERVO_COUNT):
         name = servo_values.get(f"s{channel + 1}_type", "angle180").strip().lower()
         if name not in SERVO_TYPE_NAMES:
             choices = ", ".join(SERVO_TYPE_NAMES)
             parser.error(f"servos.s{channel + 1}_type must be one of: {choices}")
-        servo_types.append(SERVO_TYPE_NAMES[name])
+        servo_type = SERVO_TYPE_NAMES[name]
+        servo_types.append(servo_type)
+
+        min_key = f"s{channel + 1}_min_angle"
+        max_key = f"s{channel + 1}_max_angle"
+        has_min = min_key in servo_values
+        has_max = max_key in servo_values
+        if servo_type == SERVO_TYPE_CONTINUOUS:
+            if has_min or has_max:
+                parser.error(f"servos.s{channel + 1}_min_angle and servos.s{channel + 1}_max_angle are invalid for continuous servos")
+            servo_angle_limits.append(None)
+            continue
+
+        max_limit = 270 if servo_type == SERVO_TYPE_270 else 180
+        try:
+            min_angle = int(servo_values[min_key]) if has_min else 0
+            max_angle = int(servo_values[max_key]) if has_max else max_limit
+        except ValueError:
+            parser.error(f"servos.s{channel + 1}_min_angle and servos.s{channel + 1}_max_angle must be integers")
+        if min_angle < 0 or min_angle > max_limit:
+            parser.error(f"servos.s{channel + 1}_min_angle must be in range 0..{max_limit}")
+        if max_angle < 0 or max_angle > max_limit:
+            parser.error(f"servos.s{channel + 1}_max_angle must be in range 0..{max_limit}")
+        if min_angle > max_angle:
+            parser.error(f"servos.s{channel + 1}_min_angle must be <= servos.s{channel + 1}_max_angle")
+        servo_angle_limits.append((min_angle, max_angle))
 
     return BotConfig(
         ip=ip,
@@ -101,4 +128,5 @@ def load_config(argv: list[str] | None = None) -> BotConfig:
         imu_bump_debounce_ms=pick(args.imu_bump_debounce_ms, "imu_bump_debounce_ms", 200, int),
         capture_path=args.capture,
         servo_types=tuple(servo_types),
+        servo_angle_limits=tuple(servo_angle_limits),
     )

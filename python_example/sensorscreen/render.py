@@ -87,15 +87,16 @@ def render_lidar_panel(snapshot: SensorSnapshot) -> np.ndarray:
 
     heatmap_w = PANEL_W - 20
     heatmap_h = (PANEL_H - 80) // 2
-    cell_w = heatmap_w / proto.LIDAR_SCAN_COLS
-    cell_h = heatmap_h / proto.LIDAR_SCAN_ROWS
+    cell_size = heatmap_w / proto.LIDAR_SCAN_COLS
+    grid_h = proto.LIDAR_SCAN_ROWS * cell_size
+    distance_y0 = 40 + (heatmap_h - grid_h) / 2
+    intensity_y0 = 40 + heatmap_h + 8 + (heatmap_h - grid_h) / 2
 
     min_mm = None
     valid_points = 0
 
     if snapshot.lidar_distance is not None:
         values = snapshot.lidar_distance.values
-        y0 = 40
         for row in range(proto.LIDAR_SCAN_ROWS):
             for col in range(proto.LIDAR_SCAN_COLS):
                 idx = row * proto.LIDAR_SCAN_COLS + col
@@ -103,19 +104,18 @@ def render_lidar_panel(snapshot: SensorSnapshot) -> np.ndarray:
                 if mm > 0:
                     valid_points += 1
                     min_mm = mm if min_mm is None else min(min_mm, mm)
-                x1, y1 = int(10 + col * cell_w), int(y0 + row * cell_h)
-                x2, y2 = int(10 + (col + 1) * cell_w), int(y0 + (row + 1) * cell_h)
+                x1, y1 = int(10 + col * cell_size), int(distance_y0 + row * cell_size)
+                x2, y2 = int(10 + (col + 1) * cell_size), int(distance_y0 + (row + 1) * cell_size)
                 cv2.rectangle(panel, (x1, y1), (x2, y2), _distance_color(mm), -1)
 
     if snapshot.lidar_intensity is not None:
         values = snapshot.lidar_intensity.values
-        y0 = 40 + heatmap_h + 8
         for row in range(proto.LIDAR_SCAN_ROWS):
             for col in range(proto.LIDAR_SCAN_COLS):
                 idx = row * proto.LIDAR_SCAN_COLS + col
                 val = values[idx] if idx < len(values) else 0
-                x1, y1 = int(10 + col * cell_w), int(y0 + row * cell_h)
-                x2, y2 = int(10 + (col + 1) * cell_w), int(y0 + (row + 1) * cell_h)
+                x1, y1 = int(10 + col * cell_size), int(intensity_y0 + row * cell_size)
+                x2, y2 = int(10 + (col + 1) * cell_size), int(intensity_y0 + (row + 1) * cell_size)
                 cv2.rectangle(panel, (x1, y1), (x2, y2), _intensity_color(val), -1)
 
     status = f"UDP:{'ON' if fresh else 'OFF'} Min:{f'{min_mm}mm' if min_mm else '---'} Hits:{valid_points}"
