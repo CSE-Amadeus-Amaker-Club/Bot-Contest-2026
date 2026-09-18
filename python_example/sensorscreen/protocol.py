@@ -1,9 +1,12 @@
 """Wire protocol constants and pack/unpack helpers for the K10 Bot UDP protocol.
 
 Mirrors the firmware constants in include/BotCommunication/BotMessageHandler.h
-and include/services/{Lidar,Geomag,Imu,Huskylens}Service.h. All multi-byte
-integers are little-endian, EXCEPT the IMU stream-enable hz field which the
-firmware encodes big-endian (see ImuService.cpp) — that quirk is preserved here.
+and include/services/{Lidar,Geomag,Imu,Huskylens}Service.h.
+
+Most streamed sensor payload fields are little-endian, while selected control
+commands use big-endian fields (for example servo angles and IMU stream/config
+helpers). UDP replies on current firmware may append an 8-byte diagnostics
+trailer; use split_udp_reply() for request/reply parsing paths.
 """
 
 from __future__ import annotations
@@ -103,6 +106,11 @@ IMU_CMD_GET_BUMP_CONFIG = 0x08
 IMU_STREAM_FRAME_CMD = 0x0F
 IMU_BUMP_EVENT_CMD = 0x10
 
+# SoundService (0x0B)
+SERVICE_SOUND = 0x0B
+SOUND_CMD_PLAY = 0x01
+SOUND_FILENAME_MAX_LENGTH = 48
+
 # Matches firmware IMU shock direction byte: 0..5 == X-/X+/Y-/Y+/Z-/Z+
 IMU_BUMP_DIR_LABELS = {
     0: "X-",
@@ -112,6 +120,8 @@ IMU_BUMP_DIR_LABELS = {
     4: "Z-",
     5: "Z+",
 }
+
+UDP_DIAGNOSTICS_TRAILER_LEN = 8
 
 
 def bump_dir_label(code: int) -> str:
@@ -152,6 +162,31 @@ def action_cmd(action: int) -> int:
     return action & 0x0F
 
 
+def split_udp_reply(frame: bytes) -> tuple[bytes, int | None, int | None]:
+    """Split protocol bytes from optional UDP diagnostics trailer.
+
+    Current firmware appends [rx_seq_be32][server_millis_be32] to non-empty UDP
+    replies. Older simulator paths may omit this trailer, so callers should
+    accept both forms.
+    """
+    if len(frame) >= 10:
+        protocol = frame[:-UDP_DIAGNOSTICS_TRAILER_LEN]
+        rx_seq, server_millis = struct.unpack_from(">II", frame, len(frame) - UDP_DIAGNOSTICS_TRAILER_LEN
+        )
+        return protocol, rx_seq, server_millis
+    return frame, None, None
+
+
+def parse_standard_reply(frame: bytes, expected_action: int | None = None) -> tuple[int, int, bytes] | None:
+    """Parse a standard response frame as [action][resp_code][payload...]."""
+    if len(frame) < 2:
+        return None
+    action = frame[0]
+    if expected_action is not None and action != expected_action:
+        return None
+    return action, frame[1], frame[2:]
+
+
 # ─── Request builders ──────────────────────────────────────────────────────
 
 def build_master_register(token: str) -> bytes:
@@ -164,6 +199,17 @@ def build_master_unregister() -> bytes:
 
 def build_heartbeat() -> bytes:
     return bytes([make_action(SERVICE_AMAKER, CMD_HEARTBEAT)])
+
+
+def build_sound_play(filename: str) -> bytes:
+    """Build [0xB1][filename] for a stored WAV sound."""
+    if not filename or len(filename) > SOUND_FILENAME_MAX_LENGTH:
+        raise ValueError(f"filename must be 1..{SOUND_FILENAME_MAX_LENGTH} characters")
+    try:
+        encoded = filename.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("filename must contain ASCII characters") from exc
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_PLAY)]) + encoded
 
 
 def build_ui_set_screen(screen: int) -> bytes:
@@ -282,14 +328,17 @@ class LidarFrame:
 
 def parse_lidar_frame(frame: bytes) -> LidarFrame | None:
     """[action][status][frame_id:u16LE][timestamp:u32LE][point_count:u16LE][...u16LE values]"""
-    if len(frame) < 10:
+    try:
+        if len(frame) < 10:
+            return None
+        frame_id, timestamp_ms, point_count = struct.unpack_from("<HIH", frame, 2)
+        expected_len = 10 + point_count * 2
+        if len(frame) < expected_len:
+            return None
+        values = list(struct.unpack_from(f"<{point_count}H", frame, 10))
+        return LidarFrame(frame_id=frame_id, timestamp_ms=timestamp_ms, values=values)
+    except struct.error:
         return None
-    frame_id, timestamp_ms, point_count = struct.unpack_from("<HIH", frame, 2)
-    expected_len = 10 + point_count * 2
-    if len(frame) < expected_len:
-        return None
-    values = list(struct.unpack_from(f"<{point_count}H", frame, 10))
-    return LidarFrame(frame_id=frame_id, timestamp_ms=timestamp_ms, values=values)
 
 
 @dataclass
@@ -303,10 +352,13 @@ class GeomagFrame:
 
 def parse_geomag_frame(frame: bytes) -> GeomagFrame | None:
     """[action][status][frame_id:u16LE][heading:u16LE][x,y,z:int16LE]"""
-    if len(frame) < 12:
+    try:
+        if len(frame) < 12:
+            return None
+        frame_id, heading, x, y, z = struct.unpack_from("<HHhhh", frame, 2)
+        return GeomagFrame(frame_id=frame_id, heading_deg=heading, field_x_ut=x, field_y_ut=y, field_z_ut=z)
+    except struct.error:
         return None
-    frame_id, heading, x, y, z = struct.unpack_from("<HHhhh", frame, 2)
-    return GeomagFrame(frame_id=frame_id, heading_deg=heading, field_x_ut=x, field_y_ut=y, field_z_ut=z)
 
 
 @dataclass
@@ -319,10 +371,13 @@ class ImuFrame:
 
 def parse_imu_frame(frame: bytes) -> ImuFrame | None:
     """[action][status][sample_id:u32LE][x,y,z:int16LE]"""
-    if len(frame) < 12:
+    try:
+        if len(frame) < 12:
+            return None
+        sample_id, x, y, z = struct.unpack_from("<Ihhh", frame, 2)
+        return ImuFrame(sample_id=sample_id, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
+    except struct.error:
         return None
-    sample_id, x, y, z = struct.unpack_from("<Ihhh", frame, 2)
-    return ImuFrame(sample_id=sample_id, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
 
 
 @dataclass
@@ -336,10 +391,13 @@ class ImuBumpEvent:
 
 def parse_imu_bump_event(frame: bytes) -> ImuBumpEvent | None:
     """[action][status][sample_id:u32LE][bump_dir:u8][x,y,z:int16LE]"""
-    if len(frame) < 13:
+    try:
+        if len(frame) < 13:
+            return None
+        sample_id, bump_dir, x, y, z = struct.unpack_from("<IBhhh", frame, 2)
+        return ImuBumpEvent(sample_id=sample_id, bump_dir=bump_dir, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
+    except struct.error:
         return None
-    sample_id, bump_dir, x, y, z = struct.unpack_from("<IBhhh", frame, 2)
-    return ImuBumpEvent(sample_id=sample_id, bump_dir=bump_dir, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
 
 
 @dataclass
@@ -350,10 +408,13 @@ class ImuBumpConfig:
 
 def parse_imu_bump_config(frame: bytes) -> ImuBumpConfig | None:
     """[action][status][threshold_mg:u16LE][debounce_ms:u16LE] (get_bump_config reply)"""
-    if len(frame) < 6:
+    try:
+        if len(frame) < 6:
+            return None
+        threshold_mg, debounce_ms = struct.unpack_from("<HH", frame, 2)
+        return ImuBumpConfig(threshold_mg=threshold_mg, debounce_ms=debounce_ms)
+    except struct.error:
         return None
-    threshold_mg, debounce_ms = struct.unpack_from("<HH", frame, 2)
-    return ImuBumpConfig(threshold_mg=threshold_mg, debounce_ms=debounce_ms)
 
 
 @dataclass
@@ -390,29 +451,32 @@ def parse_huskylens_frame(frame: bytes) -> HuskylensFrame | None:
     """[action][status][frame:u16LE][w:u16LE][h:u16LE][block_count][arrow_count]
     then block_count * [x,y,w,h:u16LE][id,conf:u8] then arrow_count * [x0,y0,x1,y1:u16LE][id,conf:u8]
     """
-    if len(frame) < 10:
+    try:
+        if len(frame) < 10:
+            return None
+        frame_number, width, height, block_count, arrow_count = struct.unpack_from("<HHHBB", frame, 2)
+        offset = 10
+        blocks: list[HuskylensBlock] = []
+        for _ in range(block_count):
+            if offset + 10 > len(frame):
+                return None
+            x, y, w, h, bid, conf = struct.unpack_from("<HHHHBB", frame, offset)
+            blocks.append(HuskylensBlock(x, y, w, h, bid, conf))
+            offset += 10
+        arrows: list[HuskylensArrow] = []
+        for _ in range(arrow_count):
+            if offset + 10 > len(frame):
+                return None
+            x0, y0, x1, y1, aid, conf = struct.unpack_from("<HHHHBB", frame, offset)
+            arrows.append(HuskylensArrow(x0, y0, x1, y1, aid, conf))
+            offset += 10
+        return HuskylensFrame(
+            connected=frame[1] == 0x00,
+            frame_number=frame_number,
+            width=width,
+            height=height,
+            blocks=blocks,
+            arrows=arrows,
+        )
+    except struct.error:
         return None
-    frame_number, width, height, block_count, arrow_count = struct.unpack_from("<HHHBB", frame, 2)
-    offset = 10
-    blocks: list[HuskylensBlock] = []
-    for _ in range(block_count):
-        if offset + 10 > len(frame):
-            return None
-        x, y, w, h, bid, conf = struct.unpack_from("<HHHHBB", frame, offset)
-        blocks.append(HuskylensBlock(x, y, w, h, bid, conf))
-        offset += 10
-    arrows: list[HuskylensArrow] = []
-    for _ in range(arrow_count):
-        if offset + 10 > len(frame):
-            return None
-        x0, y0, x1, y1, aid, conf = struct.unpack_from("<HHHHBB", frame, offset)
-        arrows.append(HuskylensArrow(x0, y0, x1, y1, aid, conf))
-        offset += 10
-    return HuskylensFrame(
-        connected=frame[1] == 0x00,
-        frame_number=frame_number,
-        width=width,
-        height=height,
-        blocks=blocks,
-        arrows=arrows,
-    )

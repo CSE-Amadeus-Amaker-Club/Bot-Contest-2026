@@ -19,8 +19,45 @@ def test_response_codes_are_named_consistently():
     assert set(proto.RESP_NAMES) == set(range(0x08))
 
 
+def test_split_udp_reply_with_trailer():
+    frame = bytes([0x41, 0x00]) + (77).to_bytes(4, "big") + (12345).to_bytes(4, "big")
+    protocol_frame, rx_seq, server_millis = proto.split_udp_reply(frame)
+
+    assert protocol_frame == bytes([0x41, 0x00])
+    assert rx_seq == 77
+    assert server_millis == 12345
+
+
+def test_split_udp_reply_without_trailer_returns_original():
+    frame = bytes([0x41, 0x00])
+    protocol_frame, rx_seq, server_millis = proto.split_udp_reply(frame)
+
+    assert protocol_frame == frame
+    assert rx_seq is None
+    assert server_millis is None
+
+
+def test_parse_standard_reply_shape_and_action_matching():
+    assert proto.parse_standard_reply(bytes([0x22])) is None
+    assert proto.parse_standard_reply(bytes([0x22, 0x00]), expected_action=0x23) is None
+    assert proto.parse_standard_reply(bytes([0x22, 0x00, 0xAA]), expected_action=0x22) == (0x22, 0x00, bytes([0xAA]))
+
+
 def test_build_master_register():
     assert proto.build_master_register("abc12") == bytes([0x41]) + b"abc12"
+
+
+def test_build_sound_play():
+    assert proto.build_sound_play("jarvis.wav") == bytes([0xB1]) + b"jarvis.wav"
+
+
+def test_build_sound_play_rejects_invalid_filenames():
+    for filename in ("", "é.wav", "a" * 49):
+        try:
+            proto.build_sound_play(filename)
+        except ValueError:
+            continue
+        raise AssertionError(f"build_sound_play accepted {filename!r}")
 
 
 def test_build_ui_set_screen():
