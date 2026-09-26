@@ -82,11 +82,10 @@ action_byte = (service_id << 4) | cmd_id
 | `0x04` | AmakerBotService | Register, heartbeat, identity | `0x41`–`0x4A` |
 | `0x05` | LEDService | Unified K10/DFR1216 LED color control | `0x50`–`0x52` |
 | `0x06` | AmakerBotUIService | TFT screen navigation | `0x60`–`0x62` |
-| `0x07` | HuskyLensService | AI vision, illumination, algorithm | `0x71`–`0x78` |
+| `0x07` | HuskyLensService | AI vision, algorithm, and stream control | `0x72`–`0x78` |
 | `0x08` | LidarService | Distance/intensity scan, stream, config | `0x80`–`0x8F` |
 | `0x09` | GeomagService | Heading, field, calibration, stream | `0x90`–`0x9F` |
 | `0x0A` | ImuService | Acceleration, bump events | `0xA0`–`0xAF` |
-| `0x0B` | SoundService | Play WAV files, stop, status | `0xB1`–`0xB4` |
 
 ### Response Format
 ```
@@ -104,7 +103,7 @@ Exception: [0x4A] REBOOT has NO response if accepted
 | `0x02` | Invalid values | Clamp values to range (e.g., angle, speed) |
 | `0x03` | Operation failed | Retry after checking hardware (sensor wiring, motor power) |
 | `0x04` | Service not started | Retry after boot completes or check hardware |
-| `0x05` | Unknown service | Check service ID is 0x02–0x0B |
+| `0x05` | Unknown service | Check service ID is 0x02–0x0A |
 | `0x06` | Unknown command | Check command nibble is valid for that service |
 | `0x07` | Not master | Call `0x41` (REGISTER) again; another IP may hold master |
 
@@ -155,8 +154,6 @@ Sending these without master will get response `0x07` (resp_not_master). Do NOT 
 Before sending:
 - **Motor speed**: clamp to `[-100, 100]`
 - **Servo angle**: clamp to range for configured servo type (e.g., 0–180 for 180° mode)
-- **Sound volume**: clamp to `[0, 100]`
-- **Sound filename**: must end in `.wav`, max 48 bytes
 
 ### 6. Response Timeout Handling
 ```python
@@ -231,8 +228,8 @@ if resp[1] == 0x00:  # resp_ok
 **Prerequisite**: HuskyLens mounted, service running, algorithm selected on device (NOT via UDP).
 
 **Workflow**:
-1. Enable illumination LED (on-device only): `[0x71][0x01]` (off: `[0x71][0x00]`)
-2. Enable vision stream: `[0x7E][0x01]` → receive `0x7F` frames asynchronously
+1. Select the algorithm on the HuskyLens device or with supported UDP controls.
+2. Enable vision stream: `[0x72][enabled][rate_hz]` → receive `0x7F` frames asynchronously
 3. Parse frames: action `0x7F`, payload = vision results (format depends on selected algorithm; consult binary-protocol.md for frame details)
 
 **Important**: Algorithm selection, model training, and screenshot functionality are **device-only**. Do not assume these are UDP-accessible.
@@ -447,7 +444,7 @@ Before running on a real bot:
 1. **Hardware check**: Motors powered, LiDAR UART wired, servos seated
 2. **Registration**: Get token from TFT, verify register succeeds
 3. **Heartbeat**: Run 1 second, verify no timeouts
-4. **Motor test**: Send one `0x21` command (motor speed), verify response `0x00`, listen for motor sound
+4. **Motor test**: Send one `0x21` command (motor speed), verify response `0x00`, and confirm movement
 5. **Servo test**: Set servo type, move servo 0 to 90°, verify movement
 6. **Stop**: Send `0x28`, verify all motion stops
 7. **Unregister**: Send `0x42`, verify response `0x00`
@@ -490,7 +487,7 @@ Hardware capability ≠ Firmware capability ≠ UDP-exposed feature
 
 Example: HuskyLens hardware supports many algorithms
          → Firmware loads some algorithms
-         → UDP exposes only streaming + illumination LED + device state queries
+         → UDP exposes streaming, algorithm, and device state queries
          → Algorithm selection is device-only
 ```
 
@@ -524,7 +521,7 @@ For deeper dives into specific topics:
 - **[ai-services.md](ai-services.md)** — Service table, command groups, HTTP executor pattern for browser tools
 - **[ai-mandatory-checklist.md](ai-mandatory-checklist.md)** — Pre-flight checklist, master-protected actions, calibration procedures, safety defaults
 - **[ai-sensors.md](ai-sensors.md)** — Sensor hardware specs vs. UDP-exposed features, LiDAR/Geomag/IMU/HuskyLens detailed capability matrix
-- **[ai-capabilities.md](ai-capabilities.md)** — Complete list of exposed features (motion, LEDs, sensors, camera, sound, settings)
+- **[ai-capabilities.md](ai-capabilities.md)** — Complete list of exposed features (motion, LEDs, sensors, camera, and settings)
 - **[ai-wiring.md](ai-wiring.html)** — Hardware wiring rules, DFR1216 board layout, motor/servo configuration
 - **[binary-protocol.md](binary-protocol.md)** — Byte-level protocol detail; full frame and response code reference
 - **[communication.md](communication.md)** — Transport overview (UDP vs. HTTP), network topology

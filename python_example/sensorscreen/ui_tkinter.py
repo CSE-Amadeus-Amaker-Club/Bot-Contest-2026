@@ -141,6 +141,7 @@ class TkControlWindow:
         self._rx_text: tk.Text | None = None
         self._rx_paused = tk.BooleanVar(value=False)
         self._rx_autoscroll = tk.BooleanVar(value=True)
+        self._rx_filter_var = tk.StringVar(value="")
         self._rx_dirty = False
 
         self.screen_var = tk.StringVar(value=self._screen_label_for(initial_state.selected_screen))
@@ -159,6 +160,7 @@ class TkControlWindow:
         self.root.title("aMaker Controls")
         self.root.geometry("620x760")
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self._rx_filter_var.trace_add("write", self._on_rx_filter_changed)
         if hasattr(self.client, "set_rx_message_callback"):
             self.client.set_rx_message_callback(self._on_udp_rx_message)
 
@@ -345,6 +347,8 @@ class TkControlWindow:
             command=self._on_rx_pause_toggled,
         ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Checkbutton(controls, text="Autoscroll", variable=self._rx_autoscroll).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(controls, text="Filter:").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Entry(controls, textvariable=self._rx_filter_var, width=28).pack(side=tk.LEFT, padx=(4, 0))
 
         body = ttk.Frame(window, padding=(8, 0, 8, 8))
         body.pack(fill=tk.BOTH, expand=True)
@@ -380,12 +384,32 @@ class TkControlWindow:
             self._rx_dirty = True
             self._render_udp_rx_buffer()
 
+    def _on_rx_filter_changed(self, *_args: object) -> None:
+        self._rx_dirty = True
+        self._render_udp_rx_buffer()
+
+    @staticmethod
+    def _rx_decoded_segment(message: str) -> str:
+        parts = message.split(" ", 1)
+        if len(parts) == 2 and len(parts[0]) == 8 and parts[0][2] == ":" and parts[0][5] == ":":
+            return parts[1]
+        return message
+
     def _render_udp_rx_buffer(self) -> None:
         if self._rx_text is None:
             return
+        filter_text = self._rx_filter_var.get().strip().lower()
+        if filter_text:
+            messages = [
+                message
+                for message in self._rx_messages
+                if filter_text in self._rx_decoded_segment(message).lower()
+            ]
+        else:
+            messages = list(self._rx_messages)
         self._rx_text.delete("1.0", tk.END)
-        if self._rx_messages:
-            self._rx_text.insert(tk.END, "\n".join(self._rx_messages) + "\n")
+        if messages:
+            self._rx_text.insert(tk.END, "\n".join(messages) + "\n")
         if self._rx_autoscroll.get():
             self._rx_text.see(tk.END)
         self._rx_dirty = False

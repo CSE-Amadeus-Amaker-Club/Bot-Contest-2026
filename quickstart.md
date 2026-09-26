@@ -49,6 +49,11 @@ All frames start with one **action byte** = `(service_id << 4) | command_id`.
 [action_byte] [0x00=OK | 0x07=not_master | …]
 ```
 
+Over UDP, non-empty replies append an 8-byte diagnostics trailer:
+`[rx_seq_be32][server_millis_be32]`.
+Parse status from byte 1, then ignore trailing diagnostics if your client does
+not use them.
+
 ---
 
 ## 4. Transport

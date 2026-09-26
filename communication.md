@@ -9,7 +9,7 @@ The K10 Bot currently exposes two active transports that both map to the same bo
 ```
 Controller  ──────────────────────────────────┐
   │  UDP :24642         (Core 0, max priority) │  →  AmakerBotService → service handlers
-  │  HTTP :80/botserver (Core 1, normal prio)  │
+  │  HTTP :80/botserver (Core 1, web task)      │
 Controller  ──────────────────────────────────┘
 ```
 
@@ -20,7 +20,7 @@ Controller  ──────────────────────�
 | **Protocol** | Binary | Hex-encoded GET |
 | **Connection** | Connectionless | One request per frame |
 | **Reply** | Same source port | HTTP response body |
-| **FreeRTOS core** | 0 (max priority) | 1 (normal priority) |
+| **FreeRTOS core** | 0 (max priority) | 1 (dedicated lower-priority web task) |
 | **Multiple clients** | Yes (last sender wins) | Yes |
 | **Best for** | Real-time control, Python scripts | Browser pages, curl/debugging |
 
@@ -47,6 +47,9 @@ Only one IP can hold master control at a time. A second `REGISTER` from a differ
 - **Delivery**: fire-and-forget, no connection state
 - **Reply**: sent back to source IP + source port
 - **Heartbeat**: watchdog timeout is **50 ms**; send every <= 30 ms to stay safe
+- **Runtime gate**: command dispatch is enabled only while Wi-Fi is network-ready
+- **ACK format change**: ACK reply is `[action][resp_code]` (not full-frame echo)
+- **Diagnostics trailer**: all non-empty UDP replies append `[rx_seq_be32][server_millis_be32]`
 
 ### Frame exchange
 
@@ -57,6 +60,9 @@ Controller                          Bot (Core 0)
 ```
 
 Heartbeat (`0x43`) intentionally has no response payload.
+
+When Wi-Fi is not ready, UDP replies with `[action][resp_not_started]` and skips
+service dispatch.
 
 ### Python snippet
 
@@ -100,32 +106,13 @@ The same HTTP server also serves static pages from `/www` on LittleFS:
 | Path | Source |
 |---|---|
 | `http://<bot-ip>/` | `/www/index.html` |
-| `http://<bot-ip>/control.html` | `/www/control.html` |
 | `http://<bot-ip>/camera.html` | `/www/camera.html` |
+| `http://<bot-ip>/metrics.html` | `/www/metrics.html` |
 | `http://<bot-ip>/buildinfo.html` | `/www/buildinfo.html` |
-| `http://<bot-ip>/soundservice.html` | `/www/soundservice.html` |
+| `http://<bot-ip>/api/metrics/sensors` | Live JSON metrics snapshot |
 | `http://<bot-ip>/cam/snapshot` | Live JPEG from camera |
 | `http://<bot-ip>/cam/stream` | MJPEG stream |
 | `http://<bot-ip>/scripts` | Script CRUD API |
-| `http://<bot-ip>/sounds` | Sound storage and playback API |
-
-### Sound HTTP routes
-
-The sound routes are direct HTTP operations, not hex-encoded `/botserver`
-commands:
-
-| Method and path | Success | Failure | Body |
-|---|---|---|---|
-| `GET /sounds` | `200` | - | JSON storage/playback summary |
-| `POST /sounds/<name>` | `200` | `400` | Raw WAV upload; response is plain text |
-| `DELETE /sounds/<name>` | `200` | `404` | Delete while playback is idle |
-| `POST /sounds/<name>/play` | `200` | `404` | Start or replace playback |
-| `POST /sounds/stop` | `200` | - | Stop playback |
-
-The upload body must be the WAV bytes, with a known content length. Upload and
-delete fail while playback is active. See the
-[SoundService guide](../../../docs/user%20guides/SoundService.md) for limits and examples.
-
 ### curl examples
 
 ```bash

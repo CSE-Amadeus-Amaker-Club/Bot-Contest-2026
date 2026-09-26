@@ -56,7 +56,6 @@ The top HuskyLens panel header includes HuskyLens-only controls:
 
 | Control | Firmware command | Behavior |
 |---|---|---|
-| `LED` | `0x71` | Toggles the HuskyLens illumination LED. |
 | `MODE < / >` | `0x74` | Cycles V1 algorithms: face, object tracking, object recognition, line, color, tag. |
 | `RGB` | `0x76` | Sends a HuskyLens RGB/status-light request; V1 firmware reports unsupported until a verified command exists. |
 | `LCD` | `0x77` | Sends a HuskyLens LCD/display request; V1 firmware reports unsupported until a verified command exists. |
@@ -65,9 +64,6 @@ These controls do not use serial/UART and do not call K10 LED or K10 display
 services. The status text under each button shows the most recent UDP acknowledgement.
 
 ## Servo controls
-
-Sound listing/discovery uses HTTP (`GET /sounds`).
-Playback commands are sent over UDP when a live UDP client is available.
 
 The bottom control band exposes the six DFR1216 servo channels as `S1` through `S6`
 (firmware channels `0` through `5`). Configure each channel in `sensorscreen.conf`:

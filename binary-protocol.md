@@ -17,6 +17,20 @@ Response:  [action_byte] [payload bytes…]               ← PING only (no resp
 Empty:     (no bytes)                                   ← HEARTBEAT / REBOOT (no reply)
 ```
 
+### UDP reply trailer (current firmware)
+
+Over UDP, every non-empty reply appends an 8-byte diagnostics trailer:
+
+```
+[protocol response bytes...] [rx_seq_be32] [server_millis_be32]
+```
+
+- `rx_seq_be32`: server-side received-packet counter for this reply
+- `server_millis_be32`: `millis()` snapshot taken when sending
+
+This includes ACK-style replies such as `[action][resp_code]`.
+The ACK is no longer an echo of the full incoming frame.
+
 ### Action byte encoding
 
 ```
@@ -54,6 +68,10 @@ has not started. Use `resp_operation_failed` when the service is running but a
 hardware transaction, sensor read, or persistence operation fails. Sensor query
 responses retain their normal payload shape when returning `resp_operation_failed`;
 the payload must be treated as invalid until a later response returns `resp_ok`.
+
+When UDP control is runtime-disabled because Wi-Fi is not ready, the transport
+returns `[action][resp_not_started]` (plus the UDP diagnostics trailer) without
+dispatching the command to services.
 
 ---
 
@@ -251,11 +269,7 @@ Screen indices:
 ## Service 0x07 — HuskylensService
 
 Commands for the HuskyLens V1/SEN0305 service. The firmware talks to the device
-over I2C only; host clients talk to the K10 over UDP only. `SET_ILLUMINATION`
-controls the HuskyLens illumination LED, not the K10 RGB LEDs and not the HuskyLens
-LCD/backlight. The firmware first tries the MakeCode V1 sensor command `0x31`,
-then falls back to the Arduino enum-derived `0x3D`, and caches the command that
-returns `COMMAND_RETURN_OK`.
+over I2C only; host clients talk to the K10 over UDP only.
 
 RGB/status-light and LCD/display requests are intentionally scoped to the HuskyLens
 service so they cannot affect the K10 LED or screen services. For verified public
@@ -264,7 +278,6 @@ these requests currently return `resp_operation_failed`.
 
 | Action | Name      | Request payload      | Response         | Notes |
 |--------|-----------|----------------------|------------------|-------|
-| `0x71` | SET_ILLUMINATION (SET_LIGHT) | `[state: u8]` | `[0x71][status]` | `0=off`, `1=on`; illumination LED only. Firmware tries V1 sensor command `0x31`, then falls back to `0x3D`. |
 | `0x72` | SET_STREAM | `[enabled: u8][hz: u8]` | `[0x72][status]` | `enabled=0/1`; `hz=0` keeps current interval, otherwise `1..20`. |
 | `0x73` | GET_STREAM | *(none)* | `[0x73][status][enabled][hz]` | Returns current HuskyLens UDP stream state. |
 | `0x74` | SET_ALGORITHM | `[algorithm: u8]` | `[0x74][status]` | Algorithms: `0=face`, `1=object tracking`, `2=object recognition`, `3=line`, `4=color`, `5=tag`. |
@@ -336,56 +349,6 @@ transport on port `24642`; it has no dedicated HTTP endpoint.
 
 ---
 
-## Service 0x0B — SoundService
-
-Controls WAV playback from the `/sounds` directory on the 6 MiB LittleFS
-`voice_data` partition. File upload, listing, and deletion use the HTTP API;
-UDP carries only bounded playback commands and filenames.
-
-| Action | Name | Request payload | Response | Notes |
-|---|---|---|---|---|
-| `0xB1` | PLAY | `[filename: ASCII bytes]` | `[0xB1][status]` | 1-48 bytes; the UDP acknowledgement confirms queueing only |
-| `0xB2` | STOP | *(none)* | `[0xB2][status]` | Stops current playback and clears a queued replacement |
-| `0xB3` | STATUS | *(none)* | `[0xB3][status][playing: u8]` | `playing` is `0` or `1` |
-| `0xB4` | VOLUME | `[percent: u8]` | `[0xB4][status]` | `percent` must be `0` through `100` |
-
-`PLAY` is deferred from the Core 0 UDP callback to Core 1. A successful UDP
-acknowledgement does not prove that the named file exists or that playback
-started. The HTTP play route validates file existence before returning success.
-
-### WAV and storage limits
-
-- Structurally valid RIFF/WAVE with PCM format and a bounded `data` chunk;
-    metadata chunks may precede the audio data.
-- Mono or stereo, unsigned 8-bit or signed 16-bit samples, 8-48 kHz sample rate.
-- Lowercase `.wav` extension; filename length is at most 48 characters.
-- Maximum file size is 300 KiB.
-- Uploads must leave at least 128 KiB free in the shared partition.
-- Upload and delete operations are rejected while a playback task is active.
-
-### Playback execution
-
-Playback runs on Core 1 at priority 6 with an 8 KiB task stack and streams in
-4 KiB blocks. It takes the shared I2S mutex with a 250 ms timeout and handles
-partial I2S writes before reading the next block. Core 0 remains reserved for
-UDP transport.
-
-### HTTP sound API
-
-| Method and path | Behavior |
-|---|---|
-| `GET /sounds` | Returns storage totals, playback state, and stored filenames as JSON |
-| `POST /sounds/<name>` | Streams a raw WAV request body into LittleFS |
-| `DELETE /sounds/<name>` | Deletes a stored WAV when playback is idle |
-| `POST /sounds/<name>/play` | Starts playback or replaces the current sound |
-| `POST /sounds/stop` | Stops playback and clears a queued replacement |
-| `POST /sounds/volume?value=<0-100>` | Sets speaker volume, including during active playback |
-
-Command nibble `0x00` is reserved. An action is unique by its complete byte,
-not by the low command nibble alone.
-
----
-
 ## Master protection summary
 
 | Requires master | Open to all senders    |
@@ -402,8 +365,7 @@ not by the low command nibble alone.
 | INCREMENT_SERVOS_ANGLE | GET_LED_STATUS  |
 | SET_SERVO270_ANGLE | SET_LED_COLOR (DFR) |
 | SET_COLOR (LED) | TURN_OFF_ALL           |
-| TURN_OFF (LED)  | SET_LIGHT (HuskyLens)  |
-|                  | PLAY/STOP/STATUS (SoundService) |
+| TURN_OFF (LED)  | GET_CONTROLS (HuskyLens) |
 
 ---
 

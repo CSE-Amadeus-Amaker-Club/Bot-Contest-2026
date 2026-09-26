@@ -10,6 +10,9 @@ This page gives an AI agent enough structure to write a safe K10 bot client.
 - Keep heartbeat `0x43` running every 25-30 ms after registration.
 - Stop motion outputs before exit.
 - Parse standard responses as `[action][resp_code][payload...]` except PING.
+- ACK format is `[action][resp_code]` (no full-frame echo).
+- Over UDP, non-empty replies append an 8-byte diagnostics trailer:
+    `[rx_seq_be32][server_millis_be32]`.
 
 ## Python Skeleton
 
@@ -44,6 +47,19 @@ def require_ok(resp: bytes, action: int):
         raise RuntimeError(f"action 0x{action:02x} failed: {resp.hex()}")
 
 
+def split_udp_reply(resp: bytes):
+    """Return (protocol_bytes, rx_seq, server_millis).
+
+    Non-empty UDP replies in current firmware append an 8-byte diagnostics trailer.
+    """
+    if len(resp) >= 10:
+        proto = resp[:-8]
+        rx_seq = int.from_bytes(resp[-8:-4], "big")
+        server_ms = int.from_bytes(resp[-4:], "big")
+        return proto, rx_seq, server_ms
+    return resp, None, None
+
+
 def heartbeat_loop():
     while heartbeat_running:
         sock.sendto(bytes([0x43]), (BOT_IP, BOT_PORT))
@@ -52,12 +68,14 @@ def heartbeat_loop():
 
 def register_master():
     resp = send(bytes([0x41]) + TOKEN.encode("ascii"))
-    require_ok(resp, 0x41)
+    proto, _, _ = split_udp_reply(resp)
+    require_ok(proto, 0x41)
 
 
 def unregister_master():
     resp = send(bytes([0x42]))
-    require_ok(resp, 0x42)
+    proto, _, _ = split_udp_reply(resp)
+    require_ok(proto, 0x42)
 
 
 def start_heartbeat():
@@ -74,13 +92,15 @@ def stop_all_motors():
 
 def set_servo_type(mask: int, servo_type: int):
     resp = send(bytes([0x22, mask & 0x3F, servo_type & 0xFF]))
-    require_ok(resp, 0x22)
+    proto, _, _ = split_udp_reply(resp)
+    require_ok(proto, 0x22)
 
 
 def set_servo_angle(mask: int, angle: int):
     payload = struct.pack(">h", angle)
     resp = send(bytes([0x24, mask & 0x3F]) + payload)
-    require_ok(resp, 0x24)
+    proto, _, _ = split_udp_reply(resp)
+    require_ok(proto, 0x24)
 
 
 try:
@@ -138,7 +158,6 @@ commands:
 
 | Action | Purpose | Payload |
 |---|---|---|
-| `0x71` | HuskyLens illumination LED | `[0|1]` |
 | `0x74` | Select HuskyLens algorithm | `[0..5]` |
 | `0x76` | HuskyLens RGB/status-light request | `[0|1]`; V1 currently reports unsupported |
 | `0x77` | HuskyLens LCD/display request | `[0|1]`; V1 currently reports unsupported |
@@ -146,41 +165,6 @@ commands:
 
 Do not map `0x76` to the K10 NeoPixel service and do not map `0x77` to K10 TFT
 screen navigation. They are reserved for HuskyLens-only control state.
-
-## Sound controls
-
-SoundService uses service ID `0x0B`. Filenames are sent as raw bytes after the
-action byte and are not NUL-terminated.
-
-```python
-def play_sound(name: str):
-    encoded = name.encode("ascii")
-    if not encoded or len(encoded) > 48 or not name.endswith(".wav"):
-        raise ValueError("sound name must be a lowercase .wav name of 1-48 bytes")
-    require_ok(send(bytes([0xB1]) + encoded), 0xB1)
-
-
-def stop_sound():
-    require_ok(send(bytes([0xB2])), 0xB2)
-
-
-def sound_is_playing() -> bool:
-    response = send(bytes([0xB3]))
-    require_ok(response, 0xB3)
-    if len(response) != 3:
-        raise RuntimeError(f"invalid sound status: {response.hex()}")
-    return response[2] != 0
-
-
-def set_sound_volume(percent: int):
-    if not 0 <= percent <= 100:
-        raise ValueError("volume must be from 0 through 100")
-    require_ok(send(bytes([0xB4, percent])), 0xB4)
-```
-
-The `0xB1` response acknowledges that the command was queued. It does not
-report a missing file or a later I2S failure. Upload and validate files through
-the HTTP `/sounds` API before requesting UDP playback.
 
 ## Error Handling
 

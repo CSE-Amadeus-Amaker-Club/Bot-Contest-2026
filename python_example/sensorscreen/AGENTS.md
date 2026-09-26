@@ -9,7 +9,7 @@ SensorsScreen.
   documentation.
 - Keep network and master-registration behavior in `udp_client.py`; UI modules
   should communicate through the existing client and state abstractions.
-- Keep sensor, servo, sound, and HuskyLens controls isolated in their existing
+- Keep sensor, servo, and HuskyLens controls isolated in their existing
   modules rather than adding device-specific logic to `main.py`.
 - Preserve safe shutdown behavior: unregister as master and stop active outputs
   when the window closes or the client exits.
