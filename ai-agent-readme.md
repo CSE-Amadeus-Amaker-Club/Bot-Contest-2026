@@ -17,7 +17,7 @@ The active control path is the existing binary bot protocol. Do not invent a new
 | [ai-environment.md](ai-environment.md) | Runtime environment, transports, build/deploy notes |
 | [ai-mandatory-checklist.md](ai-mandatory-checklist.md) | Steps a client must not skip |
 | [ai-wiring.md](ai-wiring.md) | Expected board, sensor, servo, and power wiring; uses `wiring.png` as the cable source of truth |
-| [ai-capabilities.md](ai-capabilities.md) | Sensors, servos, motors, LEDs, camera, logs, and limits |
+| [ai-capabilities.md](ai-capabilities.md) | Sensors, servos, motors, LEDs, camera, sound, logs, and limits |
 | [ai-udp-client.md](ai-udp-client.md) | Client implementation pattern with examples |
 | [ai-services.md](ai-services.md) | Available UDP services and command groups |
 | [quickstart.md](quickstart.md) | Minimal register-and-control flow |
