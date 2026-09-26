@@ -6,12 +6,13 @@ import json
 import logging
 import threading
 import time
-from urllib.error import HTTPError, URLError
-from urllib.parse import quote
-from urllib.request import Request, urlopen
+from collections.abc import Mapping, Sequence
+from pathlib import PurePosixPath
 
 import cv2
 import numpy as np
+
+from sound_http_client import SoundHttpClient
 
 logger = logging.getLogger("sensorscreen.sounds")
 FONT = cv2.FONT_HERSHEY_SIMPLEX
@@ -29,20 +30,52 @@ SCROLLBAR_W = 14
 SCROLLBAR_PAD = 2
 
 
-def parse_sound_list(payload: bytes | str) -> list[str]:
+def parse_sound_list(payload: bytes | str | Mapping[str, object] | Sequence[object]) -> list[str]:
     """Extract displayable sound filenames from a GET /sounds response."""
-    data = json.loads(payload)
-    sounds = data.get("sounds", [])
-    if not isinstance(sounds, list):
-        return []
-    return sorted({sound for sound in sounds if isinstance(sound, str) and sound}, key=str.casefold)
+    if isinstance(payload, (bytes, str, bytearray)):
+        data: Mapping[str, object] | Sequence[object] = json.loads(payload)
+    else:
+        data = payload
+    sounds: list[object] = []
+
+    if isinstance(data, Sequence) and not isinstance(data, (str, bytes, bytearray)):
+        sounds = list(data)
+    elif isinstance(data, Mapping):
+        for key in ("sounds", "files", "filenames", "items", "names"):
+            value = data.get(key)
+            if isinstance(value, list):
+                sounds = value
+                break
+
+    parsed: set[str] = set()
+    for entry in sounds:
+        if isinstance(entry, str):
+            candidate = entry.strip()
+        elif isinstance(entry, Mapping):
+            candidate = ""
+            for field in ("name", "filename", "file", "path"):
+                value = entry.get(field)
+                if isinstance(value, str):
+                    candidate = value.strip()
+                    break
+        else:
+            continue
+
+        if not candidate:
+            continue
+        name = PurePosixPath(candidate).name
+        if name.lower().endswith(".wav"):
+            parsed.add(name)
+
+    return sorted(parsed, key=str.casefold)
 
 
 class SoundControls:
     """Owns board sound discovery, dropdown selection, and HTTP playback."""
 
-    def __init__(self, ip: str, timeout: float) -> None:
-        self.base_url = f"http://{ip}"
+    def __init__(self, ip: str, timeout: float, udp_client=None) -> None:
+        self.http_client = SoundHttpClient(ip, timeout)
+        self.udp_client = udp_client
         self.timeout = timeout
         self.sounds: list[str] = []
         self.selected_sound: str | None = None
@@ -63,11 +96,6 @@ class SoundControls:
         self._refresh_requested.set()
         self._thread.join(timeout=self.timeout + 0.5)
 
-    def _request(self, path: str) -> bytes:
-        request = Request(f"{self.base_url}{path}", method="GET")
-        with urlopen(request, timeout=self.timeout) as response:
-            return response.read()
-
     def _max_scroll_offset(self) -> int:
         return max(0, len(self.sounds) - MAX_VISIBLE_SOUNDS)
 
@@ -76,8 +104,8 @@ class SoundControls:
 
     def _refresh(self) -> None:
         try:
-            sounds = parse_sound_list(self._request("/sounds"))
-        except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError) as exc:
+            sounds = parse_sound_list(self.http_client.list_sounds())
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
             logger.debug("Unable to refresh board sounds: %s", exc)
             with self._lock:
                 self.status = "OFFLINE"
@@ -105,15 +133,22 @@ class SoundControls:
                 self.status = "NO SOUNDS"
                 return
             self.status = "PLAYING..."
-        try:
-            request = Request(f"{self.base_url}/sounds/{quote(sound, safe='')}/play", method="POST")
-            with urlopen(request, timeout=self.timeout):
-                pass
-        except (HTTPError, URLError, OSError) as exc:
-            logger.debug("Unable to play %s: %s", sound, exc)
-            with self._lock:
-                self.status = "PLAY FAILED"
-            return
+        if self.udp_client is not None:
+            try:
+                self.udp_client.queue_play_sound(sound)
+            except ValueError as exc:
+                logger.debug("Unable to queue UDP sound %s: %s", sound, exc)
+                with self._lock:
+                    self.status = "PLAY FAILED"
+                return
+        else:
+            try:
+                self.http_client.play_sound(sound)
+            except OSError as exc:
+                logger.debug("Unable to play %s: %s", sound, exc)
+                with self._lock:
+                    self.status = "PLAY FAILED"
+                return
         with self._lock:
             self.status = f"PLAYING {sound[:22]}"
 
@@ -142,7 +177,7 @@ class SoundControls:
         return tx0, thumb_y0, tx1, thumb_y1
 
     def _scroll_to_y(self, y: int, visible_count: int, total_count: int) -> None:
-        tx0, ty0, tx1, ty1 = self._scrollbar_track_bounds(visible_count)
+        _tx0, ty0, _tx1, ty1 = self._scrollbar_track_bounds(visible_count)
         track_h = ty1 - ty0
         if track_h <= 0 or total_count <= visible_count:
             return

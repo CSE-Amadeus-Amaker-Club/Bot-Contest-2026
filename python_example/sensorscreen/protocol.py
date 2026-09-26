@@ -1,12 +1,11 @@
 """Wire protocol constants and pack/unpack helpers for the K10 Bot UDP protocol.
 
-Mirrors the firmware constants in include/BotCommunication/BotMessageHandler.h
-and include/services/{Lidar,Geomag,Imu,Huskylens}Service.h.
-
-Most streamed sensor payload fields are little-endian, while selected control
-commands use big-endian fields (for example servo angles and IMU stream/config
-helpers). UDP replies on current firmware may append an 8-byte diagnostics
-trailer; use split_udp_reply() for request/reply parsing paths.
+Mirrors firmware constants in k10-bot include/services and handler code.
+Most multi-byte integers are little-endian.
+Big-endian exceptions used by firmware handlers are:
+- IMU set-stream rate (u16be)
+- IMU bump config fields (u16be)
+- Servo positional angle fields (i16be)
 """
 
 from __future__ import annotations
@@ -56,7 +55,8 @@ UI_SCREEN_APP_LOG = 3
 UI_SCREEN_SERVICE_LOG = 4
 UI_SCREEN_DEBUG_LOG = 5
 UI_SCREEN_ESP_LOG = 6
-UI_SCREEN_COUNT = 7
+UI_SCREEN_DIAGNOSTICS = 7
+UI_SCREEN_COUNT = 8
 
 # HuskylensService (0x07)
 SERVICE_HUSKYLENS = 0x07
@@ -109,7 +109,20 @@ IMU_BUMP_EVENT_CMD = 0x10
 # SoundService (0x0B)
 SERVICE_SOUND = 0x0B
 SOUND_CMD_PLAY = 0x01
+SOUND_CMD_STOP = 0x02
+SOUND_CMD_STATUS = 0x03
+SOUND_CMD_VOLUME = 0x04
 SOUND_FILENAME_MAX_LENGTH = 48
+SOUND_VOLUME_MIN = 0
+SOUND_VOLUME_MAX = 100
+
+LIDAR_STREAM_RATE_MIN = 1
+LIDAR_STREAM_RATE_MAX = 8
+GEOMAG_STREAM_RATE_MIN = 1
+GEOMAG_STREAM_RATE_MAX = 50
+IMU_STREAM_RATE_MIN = 1
+IMU_STREAM_RATE_MAX = 25
+HUSKYLENS_STREAM_RATE_MAX = 20
 
 # Matches firmware IMU shock direction byte: 0..5 == X-/X+/Y-/Y+/Z-/Z+
 IMU_BUMP_DIR_LABELS = {
@@ -120,8 +133,6 @@ IMU_BUMP_DIR_LABELS = {
     4: "Z-",
     5: "Z+",
 }
-
-UDP_DIAGNOSTICS_TRAILER_LEN = 8
 
 
 def bump_dir_label(code: int) -> str:
@@ -162,31 +173,6 @@ def action_cmd(action: int) -> int:
     return action & 0x0F
 
 
-def split_udp_reply(frame: bytes) -> tuple[bytes, int | None, int | None]:
-    """Split protocol bytes from optional UDP diagnostics trailer.
-
-    Current firmware appends [rx_seq_be32][server_millis_be32] to non-empty UDP
-    replies. Older simulator paths may omit this trailer, so callers should
-    accept both forms.
-    """
-    if len(frame) >= 10:
-        protocol = frame[:-UDP_DIAGNOSTICS_TRAILER_LEN]
-        rx_seq, server_millis = struct.unpack_from(">II", frame, len(frame) - UDP_DIAGNOSTICS_TRAILER_LEN
-        )
-        return protocol, rx_seq, server_millis
-    return frame, None, None
-
-
-def parse_standard_reply(frame: bytes, expected_action: int | None = None) -> tuple[int, int, bytes] | None:
-    """Parse a standard response frame as [action][resp_code][payload...]."""
-    if len(frame) < 2:
-        return None
-    action = frame[0]
-    if expected_action is not None and action != expected_action:
-        return None
-    return action, frame[1], frame[2:]
-
-
 # ─── Request builders ──────────────────────────────────────────────────────
 
 def build_master_register(token: str) -> bytes:
@@ -212,6 +198,20 @@ def build_sound_play(filename: str) -> bytes:
     return bytes([make_action(SERVICE_SOUND, SOUND_CMD_PLAY)]) + encoded
 
 
+def build_sound_stop() -> bytes:
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_STOP)])
+
+
+def build_sound_status() -> bytes:
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_STATUS)])
+
+
+def build_sound_volume(percent: int) -> bytes:
+    if not SOUND_VOLUME_MIN <= percent <= SOUND_VOLUME_MAX:
+        raise ValueError(f"volume must be in {SOUND_VOLUME_MIN}..{SOUND_VOLUME_MAX}")
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_VOLUME), percent])
+
+
 def build_ui_set_screen(screen: int) -> bytes:
     """Build [0x63][screen] to select a K10 UI screen by its firmware index."""
     if not 0 <= screen < UI_SCREEN_COUNT:
@@ -220,19 +220,32 @@ def build_ui_set_screen(screen: int) -> bytes:
 
 
 def build_lidar_set_stream(enabled: bool, hz: int) -> bytes:
+    if enabled and not LIDAR_STREAM_RATE_MIN <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar hz must be in {LIDAR_STREAM_RATE_MIN}..{LIDAR_STREAM_RATE_MAX} when enabled")
+    if not enabled and not 0 <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar hz must be in 0..{LIDAR_STREAM_RATE_MAX} when disabled")
     return bytes([make_action(SERVICE_LIDAR, LIDAR_CMD_SET_STREAM), 1 if enabled else 0, hz, 0])
 
 
 def build_lidar_set_stream_intensity(enabled: bool, hz: int) -> bytes:
+    if enabled and not LIDAR_STREAM_RATE_MIN <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar intensity hz must be in {LIDAR_STREAM_RATE_MIN}..{LIDAR_STREAM_RATE_MAX} when enabled")
+    if not enabled and not 0 <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar intensity hz must be in 0..{LIDAR_STREAM_RATE_MAX} when disabled")
     return bytes([make_action(SERVICE_LIDAR, LIDAR_CMD_SET_STREAM_INTENSITY), 1 if enabled else 0, hz, 0])
 
 
 def build_geomag_set_stream(enabled: bool, hz: int) -> bytes:
+    # Firmware currently reads a single u8 hz and requires 1..50 regardless of enabled flag.
+    if not GEOMAG_STREAM_RATE_MIN <= hz <= GEOMAG_STREAM_RATE_MAX:
+        raise ValueError(f"geomag hz must be in {GEOMAG_STREAM_RATE_MIN}..{GEOMAG_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_GEOMAG, GEOMAG_CMD_SET_STREAM), 1 if enabled else 0, hz])
 
 
 def build_imu_set_stream(enabled: bool, hz: int) -> bytes:
     # Firmware reads hz as big-endian u16 here, unlike every other service.
+    if not IMU_STREAM_RATE_MIN <= hz <= IMU_STREAM_RATE_MAX:
+        raise ValueError(f"imu hz must be in {IMU_STREAM_RATE_MIN}..{IMU_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_IMU, IMU_CMD_SET_STREAM), 1 if enabled else 0]) + struct.pack(">H", hz)
 
 
@@ -242,6 +255,10 @@ def build_imu_set_bump_config(threshold_mg: int, debounce_ms: int) -> bytes:
 
 
 def build_huskylens_set_stream(enabled: bool, hz: int) -> bytes:
+    if enabled and not 0 <= hz <= HUSKYLENS_STREAM_RATE_MAX:
+        raise ValueError(f"huskylens hz must be in 0..{HUSKYLENS_STREAM_RATE_MAX}")
+    if not enabled and not 0 <= hz <= HUSKYLENS_STREAM_RATE_MAX:
+        raise ValueError(f"huskylens hz must be in 0..{HUSKYLENS_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_HUSKYLENS, HUSKYLENS_CMD_SET_STREAM), 1 if enabled else 0, hz])
 
 
@@ -414,6 +431,23 @@ def parse_imu_bump_config(frame: bytes) -> ImuBumpConfig | None:
         threshold_mg, debounce_ms = struct.unpack_from("<HH", frame, 2)
         return ImuBumpConfig(threshold_mg=threshold_mg, debounce_ms=debounce_ms)
     except struct.error:
+        return None
+
+
+@dataclass
+class SoundStatus:
+    playing: bool
+
+
+def parse_sound_status(frame: bytes) -> SoundStatus | None:
+    """[action][status][playing:u8] for SoundService STATUS (0xB3)."""
+    try:
+        if len(frame) < 3:
+            return None
+        if frame[1] != RESP_OK:
+            return None
+        return SoundStatus(playing=frame[2] != 0)
+    except IndexError:
         return None
 
 

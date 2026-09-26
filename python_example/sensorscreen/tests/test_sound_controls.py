@@ -5,12 +5,38 @@ import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sound_controls import DROP_DOWN_BOUNDS, OPTION_H, OPTION_TOP, PLAY_BOUNDS, SoundControls, parse_sound_list
+from sound_controls import (
+    DROP_DOWN_BOUNDS,
+    OPTION_H,
+    OPTION_TOP,
+    PLAY_BOUNDS,
+    SoundControls,
+    parse_sound_list,
+)
 
 
 def test_parse_sound_list_sorts_and_discards_invalid_entries():
     payload = '{"sounds": ["warn.wav", "Ready.wav", "warn.wav", 3, ""]}'
     assert parse_sound_list(payload) == ["Ready.wav", "warn.wav"]
+
+
+def test_parse_sound_list_accepts_alternate_keys_and_object_entries():
+    payload = {
+        "files": [
+            {"name": "Ready.wav"},
+            {"filename": "/sounds/warn.wav"},
+            {"path": "tones/alert.WAV"},
+            {"name": "ignore.mp3"},
+            {},
+            42,
+        ]
+    }
+    assert parse_sound_list(payload) == ["alert.WAV", "Ready.wav", "warn.wav"]
+
+
+def test_parse_sound_list_accepts_top_level_array():
+    payload = ["beep.wav", "nested/tone.wav", "skip.txt"]
+    assert parse_sound_list(payload) == ["beep.wav", "tone.wav"]
 
 
 def test_dropdown_selects_sound():

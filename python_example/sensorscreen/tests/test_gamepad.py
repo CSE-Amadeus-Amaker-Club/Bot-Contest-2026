@@ -20,6 +20,9 @@ class FakeCommandClient:
     def queue_set_servo_angle(self, channel, angle, force=False):
         self.commands.append(("angle", (channel, angle, force)))
 
+    def queue_set_led_color(self, led_mask, red, green, blue, brightness):
+        self.commands.append(("led", (led_mask, red, green, blue, brightness)))
+
 
 class FakeJoystick:
     def __init__(self, axes=None, buttons=None):
@@ -68,6 +71,23 @@ def test_joystick_updates_commands_and_rendered_cursor_values():
         ("angle", (3, 0, False)),
     ]
     assert [channel.value for channel in controls.channels[:4]] == [-50, 25, 270, 0]
+
+
+def test_unchanged_joystick_values_do_not_repeat_servo_commands():
+    client = FakeCommandClient()
+    controls = _controls(client)
+    manager = GamepadManager(
+        tuple(channel.servo_type for channel in controls.channels),
+        (None,) * proto.SERVO_COUNT,
+    )
+    joystick = FakeJoystick()
+    manager.joystick = joystick
+
+    manager.apply_controls(client, controls)
+    first_count = len(client.commands)
+    manager.apply_controls(client, controls)
+
+    assert len(client.commands) == first_count
 
 
 def test_safe_positions_update_commands_and_rendered_cursor_values():
@@ -215,3 +235,129 @@ s6_type = angle180
 
     with pytest.raises(SystemExit):
         load_config(["--config", str(config_path)])
+
+
+def test_load_config_parses_gamepad_action_mapping(tmp_path):
+    config_path = tmp_path / "sensorscreen.conf"
+    config_path.write_text(
+        """[bot]
+bot_ip = 127.0.0.1
+
+[servos]
+s1_type = continuous
+s2_type = continuous
+s3_type = angle270
+s4_type = angle270
+s5_type = angle180
+s6_type = angle180
+
+[gamepad]
+left_bumber = gamepad_callbacks.set_angle(servonumber=2,minvalue=0,maxvalue=270,bumpervalue=$value)
+button_a = gamepad_callbacks.set_led(red=255,green=0,blue=0,buttonvalue=$value)
+""",
+        encoding="utf-8",
+    )
+
+    config = load_config(["--config", str(config_path)])
+
+    assert "left_bumper" in config.gamepad_actions
+    assert "left_bumber" not in config.gamepad_actions
+    assert "button_a" in config.gamepad_actions
+
+
+def test_load_config_rejects_unknown_gamepad_key(tmp_path):
+    config_path = tmp_path / "sensorscreen.conf"
+    config_path.write_text(
+        """[bot]
+bot_ip = 127.0.0.1
+
+[servos]
+s1_type = continuous
+s2_type = continuous
+s3_type = angle270
+s4_type = angle270
+s5_type = angle180
+s6_type = angle180
+
+[gamepad]
+button_start = gamepad_callbacks.set_led(red=255,green=0,blue=0,buttonvalue=$value)
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit):
+        load_config(["--config", str(config_path)])
+
+
+def test_configured_button_action_uses_boolean_value():
+    client = FakeCommandClient()
+    controls = _controls(client)
+    manager = GamepadManager(
+        tuple(channel.servo_type for channel in controls.channels),
+        (None,) * proto.SERVO_COUNT,
+        {
+            "button_a": "gamepad_callbacks.set_led(red=255,green=0,blue=0,buttonvalue=$value)",
+        },
+    )
+
+    manager._run_action("button_a", True, client, controls)
+    manager._run_action("button_a", False, client, controls)
+
+    assert client.commands == [
+        ("led", (proto.LED_MASK_ALL, 255, 0, 0, 255)),
+        ("led", (proto.LED_MASK_ALL, 0, 0, 0, 255)),
+    ]
+
+
+def test_configured_stick_mapping_routes_to_custom_servo_channel():
+    client = FakeCommandClient()
+    controls = _controls(client)
+    manager = GamepadManager(
+        tuple(channel.servo_type for channel in controls.channels),
+        (None,) * proto.SERVO_COUNT,
+        {
+            "left_stick_y": "gamepad_callbacks.set_speed(servonumber=1,speedvalue=$value)",
+        },
+    )
+    manager.joystick = FakeJoystick(axes=[0.0, 0.4, 0.0, 0.0, -1.0, -1.0])
+
+    manager.apply_controls(client, controls)
+
+    assert client.commands == [("speed", (1, -40, False))]
+    assert controls.channels[1].value == -40
+
+
+def test_configured_right_stick_x_mapping_routes_to_custom_servo_channel():
+    client = FakeCommandClient()
+    controls = _controls(client)
+    manager = GamepadManager(
+        tuple(channel.servo_type for channel in controls.channels),
+        (None,) * proto.SERVO_COUNT,
+        {
+            "right_stick_x": "gamepad_callbacks.set_speed(servonumber=1,speedvalue=$value)",
+        },
+    )
+    manager.joystick = FakeJoystick(axes=[0.0, 0.0, -0.35, 0.0, -1.0, -1.0])
+
+    manager.apply_controls(client, controls)
+
+    assert client.commands == [("speed", (1, 35, False))]
+    assert controls.channels[1].value == 35
+
+
+def test_constant_boolean_mapping_without_value_placeholder_is_supported():
+    client = FakeCommandClient()
+    controls = _controls(client)
+    manager = GamepadManager(
+        tuple(channel.servo_type for channel in controls.channels),
+        (None,) * proto.SERVO_COUNT,
+        {
+            "button_guide": "gamepad_callbacks.set_led(red=0,green=0,blue=0,buttonvalue=true)",
+        },
+    )
+
+    manager._run_action("button_guide", True, client, controls)
+
+    assert client.commands == [
+        ("led", (proto.LED_MASK_ALL, 0, 0, 0, 255)),
+    ]

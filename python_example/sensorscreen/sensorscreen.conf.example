@@ -6,13 +6,21 @@ bot_ip = 192.168.1.178
 bot_port = 24642
 bot_token = 6DEE8
 bot_timeout = 2.0
-lidar_hz = 10
+# If true, send UDP commands without waiting for ACK replies.
+# Useful on noisy links where async stream packets can race command replies.
+udp_fire_and_forget = true
+lidar_hz = 8
 geomag_hz = 10
 imu_hz = 10
 huskylens_hz = 10
-# IMU bump detection: threshold (50-1900 mg) and debounce (0-2000 ms); firmware defaults shown.
-imu_bump_threshold_mg = 50
-imu_bump_debounce_ms = 200
+# Stream-rate constraints enforced by current firmware handlers:
+# - lidar_hz: 1..8
+# - geomag_hz: 1..50
+# - imu_hz: 1..25
+# - huskylens_hz: 0..20
+# IMU bump detection: threshold (50-2000 mg) and debounce (0-2000 ms); firmware defaults shown.
+imu_bump_threshold_mg = 2000
+imu_bump_debounce_ms = 100
 
 [servos]
 # Each channel is fixed as S1 through S6 (firmware channels 0 through 5).
@@ -21,13 +29,44 @@ s1_type = continuous
 s2_type = continuous
 s3_type = angle270
 s4_type = angle270
-s5_type = angle180
-s6_type = angle180
+s5_type = angle270
+s6_type = angle270
 
 # Optional per-servo angle limits for angular servos.
 # Values must remain within the servo type range (0..180 or 0..270).
 # Omit these keys to use full range defaults.
-s3_min_angle = 0
-s3_max_angle = 270
+s5_min_angle = 43
+s5_max_angle = 77
 s4_min_angle = 0
 s4_max_angle = 270
+
+[gamepad]
+# Map controls to Python call expressions. Each expression is parsed at startup,
+# and any $value placeholder is replaced with the runtime control value.
+#
+# Control keys:
+# - left_stick_y, right_stick_y
+# - left_trigger, right_trigger
+# - left_bumper, right_bumper
+# - button_a, button_b, button_x, button_y, button_lb, button_rb, button_guide
+#
+# Value semantics:
+# - button_* values are boolean: true on press, false on release
+# - left/right_bumper values are boolean
+# - left/right_trigger values are normalized 0.0..1.0
+# - left/right_stick_y values are speed-style integers -100..100
+#
+# Built-in callback helpers live in gamepad_callbacks.py, but any importable dotted
+# callable path is allowed. Treat this config as trusted input.
+#
+# left_stick_y = gamepad_callbacks.set_speed(servonumber=0,speedvalue=$value)
+# right_stick_y = gamepad_callbacks.set_speed(servonumber=1,speedvalue=$value)
+# left_bumper = gamepad_callbacks.set_angle(servonumber=2,minvalue=0,maxvalue=270,bumpervalue=$value)
+# left_trigger = gamepad_callbacks.set_angle(servonumber=2,minvalue=0,maxvalue=270,triggervalue=$value)
+# right_bumper = gamepad_callbacks.set_angle(servonumber=3,minvalue=0,maxvalue=270,bumpervalue=$value)
+# right_trigger = gamepad_callbacks.set_angle(servonumber=3,minvalue=0,maxvalue=270,triggervalue=$value)
+# button_a = gamepad_callbacks.set_led(red=0,green=255,blue=0,buttonvalue=$value)
+# button_b = gamepad_callbacks.set_led(red=255,green=0,blue=0,buttonvalue=$value)
+# button_x = gamepad_callbacks.set_led(red=0,green=0,blue=255,buttonvalue=$value)
+# button_y = gamepad_callbacks.set_led(red=255,green=255,blue=0,buttonvalue=$value)
+# button_guide = gamepad_callbacks.set_led(red=0,green=0,blue=0,buttonvalue=true)

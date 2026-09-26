@@ -1,3 +1,16 @@
+Metadata-Version: 2.4
+Name: sensorscreen
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.13
+Description-Content-Type: text/markdown
+Requires-Dist: opencv-python>=4.8
+Requires-Dist: numpy>=1.24
+Requires-Dist: pygame>=2.5
+Requires-Dist: tinker>=0.28
+Provides-Extra: dev
+Requires-Dist: pytest<9,>=8.4; extra == "dev"
+
 # K10 Bot — SensorsScreen (Python/OpenCV UDP replica)
 
 Reproduces the device's on-board SensorsScreen (HuskyLens, Lidar, IMU, Geomag) on the host,
@@ -21,18 +34,12 @@ Current firmware stream-rate limits enforced by this client:
 - `imu_hz`: `1..25`
 - `huskylens_hz`: `0..20`
 
-Optional UDP command mode:
-- `udp_fire_and_forget = true` in `sensorscreen.conf` sends commands without waiting for ACK replies.
-- CLI equivalent: `--fire-and-forget`.
-
 ## Run
 
 ```bash
 python main.py
 # or override the config file:
 python main.py --ip 192.168.4.1 --token abc12
-# run in fire-and-forget mode:
-python main.py --ip 192.168.4.1 --token abc12 --fire-and-forget
 # record raw LIDAR distance frames as JSONL:
 python main.py --ip 192.168.4.1 --token abc12 --capture captures/lidar.jsonl
 ```

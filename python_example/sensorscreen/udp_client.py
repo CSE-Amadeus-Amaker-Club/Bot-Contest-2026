@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import math
 import socket
 import threading
 import time
+from collections.abc import Callable
 from collections import deque
 from dataclasses import dataclass
 
@@ -17,7 +19,6 @@ logger = logging.getLogger("sensorscreen.udp")
 
 HEARTBEAT_INTERVAL_S = 0.03  # well under the firmware's 50ms watchdog
 COMMAND_TIMEOUT_S = 1.0
-MOTION_REPEAT_COUNT = 2
 PACKET_RATE_WINDOW_S = 2.0
 
 
@@ -42,18 +43,20 @@ class PendingCommand:
     status_key: str
     label: str
     coalesce_key: str | None = None
+    require_ack: bool = True
     sent_at: float | None = None
-    repeats_remaining: int = 0
 
 
 class SensorUDPClient:
     def __init__(self, ip: str, port: int, token: str, timeout: float, state: SensorState,
-                 lidar_capture: LidarCapture | None = None) -> None:
+                 lidar_capture: LidarCapture | None = None,
+                 fire_and_forget: bool = False) -> None:
         self.target = (ip, port)
         self.token = token
         self.timeout = timeout
         self.state = state
         self.lidar_capture = lidar_capture
+        self.fire_and_forget = fire_and_forget
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(timeout)
         self.sock.bind(("", 0))
@@ -65,13 +68,150 @@ class SensorUDPClient:
         self._command_status: dict[str, str] = {}
         self._heartbeat_thread: threading.Thread | None = None
         self._receiver_thread: threading.Thread | None = None
-        self._master_registered = False
-        self._closed = False
         self._stats_lock = threading.Lock()
         self._packets_out_total = 0
         self._packets_in_total = 0
         self._out_samples: deque[tuple[float, int]] = deque()
         self._in_samples: deque[tuple[float, int]] = deque()
+        self._master_registered = False
+        self._rx_message_callback: Callable[[str], None] | None = None
+
+    def set_rx_message_callback(self, callback: Callable[[str], None] | None) -> None:
+        """Attach a callback that receives one decoded line per incoming UDP frame."""
+        self._rx_message_callback = callback
+
+    def _notify_rx_message(self, frame: bytes) -> None:
+        callback = self._rx_message_callback
+        if callback is None:
+            return
+        try:
+            callback(self._decode_rx_frame(frame))
+        except Exception:
+            # Never let diagnostics callbacks interfere with control loops.
+            pass
+
+    def _decode_rx_frame(self, frame: bytes) -> str:
+        if not frame:
+            return "RX empty frame"
+
+        action = frame[0]
+        action_name = self._action_name(action)
+        base = f"RX 0x{action:02X} {action_name}"
+
+        if action == proto.make_action(proto.SERVICE_AMAKER, proto.CMD_PING):
+            payload = frame[1:5]
+            ping_hex = payload.hex() if payload else ""
+            return f"{base} ping={ping_hex} len={len(frame)}"
+
+        if len(frame) < 2:
+            return f"{base} malformed len={len(frame)}"
+
+        status = frame[1]
+        status_name = proto.RESP_NAMES.get(status, f"0x{status:02X}")
+
+        if action == proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_STREAM_FRAME_CMD):
+            parsed = proto.parse_lidar_frame(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed lidar"
+            return (
+                f"{base} status={status_name} frame={parsed.frame_id} ts={parsed.timestamp_ms} "
+                f"points={len(parsed.values)}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_STREAM_INTENSITY_FRAME_CMD):
+            parsed = proto.parse_lidar_frame(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed lidar-intensity"
+            return (
+                f"{base} status={status_name} frame={parsed.frame_id} ts={parsed.timestamp_ms} "
+                f"points={len(parsed.values)}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_GEOMAG, proto.GEOMAG_STREAM_FRAME_CMD):
+            parsed = proto.parse_geomag_frame(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed geomag"
+            return (
+                f"{base} status={status_name} frame={parsed.frame_id} heading={parsed.heading_deg} "
+                f"x={parsed.field_x_ut} y={parsed.field_y_ut} z={parsed.field_z_ut}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_IMU, proto.IMU_STREAM_FRAME_CMD):
+            parsed = proto.parse_imu_frame(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed imu"
+            return (
+                f"{base} status={status_name} sample={parsed.sample_id} "
+                f"x={parsed.accel_x_mg} y={parsed.accel_y_mg} z={parsed.accel_z_mg}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_IMU, proto.IMU_BUMP_EVENT_CMD):
+            parsed = proto.parse_imu_bump_event(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed imu-bump"
+            return (
+                f"{base} status={status_name} sample={parsed.sample_id} dir={proto.bump_dir_label(parsed.bump_dir)} "
+                f"x={parsed.accel_x_mg} y={parsed.accel_y_mg} z={parsed.accel_z_mg}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_STREAM_FRAME_CMD):
+            parsed = proto.parse_huskylens_frame(frame)
+            if parsed is None:
+                return f"{base} status={status_name} malformed huskylens"
+            return (
+                f"{base} status={status_name} frame={parsed.frame_number} "
+                f"size={parsed.width}x{parsed.height} blocks={len(parsed.blocks)} arrows={len(parsed.arrows)}"
+            )
+
+        if action == proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_STATUS):
+            parsed = proto.parse_sound_status(frame)
+            if parsed is None:
+                return f"{base} status={status_name} payload={frame[2:].hex()}"
+            return f"{base} status={status_name} playing={'yes' if parsed.playing else 'no'}"
+
+        payload = frame[2:]
+        payload_hex = payload.hex()
+        if len(payload_hex) > 64:
+            payload_hex = f"{payload_hex[:64]}..."
+        return f"{base} status={status_name} payload={payload_hex}"
+
+    def _action_name(self, action: int) -> str:
+        names = {
+            proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_REGISTER): "master.register",
+            proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_UNREGISTER): "master.unregister",
+            proto.make_action(proto.SERVICE_AMAKER, proto.CMD_HEARTBEAT): "master.heartbeat",
+            proto.make_action(proto.SERVICE_AMAKER, proto.CMD_PING): "master.ping",
+            proto.make_action(proto.SERVICE_MOTOR_SERVO, proto.MOTOR_SERVO_CMD_SET_SERVO_TYPE): "servo.set_type",
+            proto.make_action(proto.SERVICE_MOTOR_SERVO, proto.MOTOR_SERVO_CMD_SET_SERVOS_SPEED): "servo.set_speed",
+            proto.make_action(proto.SERVICE_MOTOR_SERVO, proto.MOTOR_SERVO_CMD_SET_SERVOS_ANGLE): "servo.set_angle",
+            proto.make_action(proto.SERVICE_MOTOR_SERVO, proto.MOTOR_SERVO_CMD_STOP_ALL_MOTORS): "servo.stop_all",
+            proto.make_action(proto.SERVICE_LED, proto.LED_CMD_SET_COLOR): "led.set_color",
+            proto.make_action(proto.SERVICE_UI, proto.UI_CMD_SET_SCREEN): "ui.set_screen",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_CMD_SET_ILLUMINATION): "huskylens.set_illumination",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_CMD_SET_STREAM): "huskylens.set_stream",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_CMD_SET_ALGORITHM): "huskylens.set_algorithm",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_CMD_SET_RGB_LIGHT): "huskylens.set_rgb_light",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_CMD_SET_DISPLAY): "huskylens.set_display",
+            proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_STREAM_FRAME_CMD): "huskylens.stream",
+            proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_CMD_SET_STREAM): "lidar.set_stream",
+            proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_CMD_SET_STREAM_INTENSITY): "lidar.set_stream_intensity",
+            proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_STREAM_FRAME_CMD): "lidar.stream_distance",
+            proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_STREAM_INTENSITY_FRAME_CMD): "lidar.stream_intensity",
+            proto.make_action(proto.SERVICE_GEOMAG, proto.GEOMAG_CMD_SET_STREAM): "geomag.set_stream",
+            proto.make_action(proto.SERVICE_GEOMAG, proto.GEOMAG_STREAM_FRAME_CMD): "geomag.stream",
+            proto.make_action(proto.SERVICE_IMU, proto.IMU_CMD_SET_STREAM): "imu.set_stream",
+            proto.make_action(proto.SERVICE_IMU, proto.IMU_CMD_SET_BUMP_CONFIG): "imu.set_bump_config",
+            proto.make_action(proto.SERVICE_IMU, proto.IMU_CMD_GET_BUMP_CONFIG): "imu.get_bump_config",
+            proto.make_action(proto.SERVICE_IMU, proto.IMU_STREAM_FRAME_CMD): "imu.stream",
+            proto.make_action(proto.SERVICE_IMU, proto.IMU_BUMP_EVENT_CMD): "imu.bump",
+            proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_PLAY): "sound.play",
+            proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_STOP): "sound.stop",
+            proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_STATUS): "sound.status",
+            proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_VOLUME): "sound.volume",
+        }
+        if action in names:
+            return names[action]
+        return f"svc{proto.action_service(action)}.cmd{proto.action_cmd(action)}"
 
     def _send(self, data: bytes, count: bool = True) -> None:
         with self._send_lock:
@@ -79,26 +219,40 @@ class SensorUDPClient:
         if count:
             self._record_packet(self._out_samples, len(data), outgoing=True)
 
-    def _request(self, data: bytes) -> bytes | None:
-        self._send(data)
-        try:
-            resp, _ = self.sock.recvfrom(2048)
-            self._record_packet(self._in_samples, len(resp), outgoing=False)
-            return resp
-        except TimeoutError:
-            return None
+    def _request(self, data: bytes, expected_action: int | None = None) -> bytes | None:
+        """Send one request and wait for the matching action reply.
 
-    def _request_standard_reply(self, data: bytes, expected_action: int) -> tuple[int, bytes] | None:
-        """Read a standard [action][resp_code][payload...] reply, tolerating UDP trailer bytes."""
-        resp = self._request(data)
-        if resp is None:
-            return None
-        protocol_reply, _, _ = proto.split_udp_reply(resp)
-        parsed = proto.parse_standard_reply(protocol_reply, expected_action=expected_action)
-        if parsed is None:
-            return None
-        _, status, payload = parsed
-        return status, payload
+        Some services can emit asynchronous stream frames while setup commands
+        are in flight. Ignore unrelated actions until timeout so those frames
+        are not mistaken for this command's ACK.
+        """
+        if expected_action is None:
+            expected_action = data[0] if data else None
+
+        self._send(data)
+        deadline = time.monotonic() + COMMAND_TIMEOUT_S
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+
+            self.sock.settimeout(min(self.timeout, remaining))
+            try:
+                resp, _ = self.sock.recvfrom(2048)
+            except socket.timeout:
+                return None
+
+            self._record_packet(self._in_samples, len(resp), outgoing=False)
+            if expected_action is None:
+                return resp
+            if resp and resp[0] == expected_action:
+                return resp
+
+            logger.debug(
+                "Ignoring unsolicited frame while waiting for 0x%02X: got 0x%02X",
+                expected_action,
+                resp[0] if resp else 0,
+            )
 
     def _record_packet(self, samples: deque[tuple[float, int]], size: int, outgoing: bool) -> None:
         now = time.monotonic()
@@ -128,14 +282,16 @@ class SensorUDPClient:
             )
 
     def register_master(self) -> None:
+        if self.fire_and_forget:
+            self._send(proto.build_master_register(self.token))
+            self._master_registered = True
+            return
+
         # Firmware reply is the standard 2-byte ack: [action][resp_code].
-        reply = self._request_standard_reply(
-            proto.build_master_register(self.token),
-            expected_action=proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_REGISTER),
-        )
-        if reply is None:
+        resp = self._request(proto.build_master_register(self.token))
+        if resp is None or len(resp) < 2:
             raise MasterRegistrationError("No reply from bot during master registration (check ip/port)")
-        status, _ = reply
+        status = resp[1]
         if status != proto.RESP_OK:
             name = proto.RESP_NAMES.get(status, hex(status))
             raise MasterRegistrationError(f"Master registration failed: {name}")
@@ -143,10 +299,11 @@ class SensorUDPClient:
 
     def unregister(self) -> None:
         try:
-            self._request_standard_reply(
-                proto.build_master_unregister(),
-                expected_action=proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_UNREGISTER),
-            )
+            if self.fire_and_forget:
+                self._send(proto.build_master_unregister())
+                self._master_registered = False
+                return
+            self._request(proto.build_master_unregister())
         except OSError:
             pass
         self._master_registered = False
@@ -159,9 +316,16 @@ class SensorUDPClient:
             ("imu", proto.build_imu_set_stream(True, imu_hz)),
             ("huskylens", proto.build_huskylens_set_stream(True, huskylens_hz)),
         ):
-            reply = self._request_standard_reply(data, expected_action=data[0])
-            if reply is None or reply[0] != proto.RESP_OK:
-                logger.warning("Failed to enable %s streaming: %s", label, reply)
+            if self.fire_and_forget:
+                try:
+                    self._send(data)
+                except OSError:
+                    logger.warning("Failed to send %s streaming command", label)
+                continue
+
+            resp = self._request(data)
+            if resp is None or len(resp) < 2 or resp[1] != proto.RESP_OK:
+                logger.warning("Failed to enable %s streaming: %s", label, resp)
 
     def disable_streams(self) -> None:
         for data in (
@@ -177,30 +341,28 @@ class SensorUDPClient:
                 pass
 
     def configure_imu_bump(self, threshold_mg: int, debounce_ms: int) -> None:
-        action = proto.make_action(proto.SERVICE_IMU, proto.IMU_CMD_SET_BUMP_CONFIG)
-        reply = self._request_standard_reply(
-            proto.build_imu_set_bump_config(threshold_mg, debounce_ms),
-            expected_action=action,
-        )
-        if reply is None or reply[0] != proto.RESP_OK:
-            logger.warning("Failed to set IMU bump config: %s", reply)
+        if self.fire_and_forget:
+            try:
+                self._send(proto.build_imu_set_bump_config(threshold_mg, debounce_ms))
+                logger.info(
+                    "IMU bump config sent (fire-and-forget): threshold=%d mg debounce=%d ms",
+                    threshold_mg,
+                    debounce_ms,
+                )
+            except OSError:
+                logger.warning("Failed to send IMU bump config (fire-and-forget)")
+            return
+
+        resp = self._request(proto.build_imu_set_bump_config(threshold_mg, debounce_ms))
+        if resp is None or len(resp) < 2 or resp[1] != proto.RESP_OK:
+            logger.warning("Failed to set IMU bump config: %s", resp)
             return
         readback = self._request(bytes([proto.make_action(proto.SERVICE_IMU, proto.IMU_CMD_GET_BUMP_CONFIG)]))
-        if readback is not None:
-            readback, _, _ = proto.split_udp_reply(readback)
         parsed = proto.parse_imu_bump_config(readback) if readback else None
         if parsed is None:
             logger.warning("IMU bump config set but readback failed: %s", readback)
         else:
             logger.info("IMU bump config active: threshold=%d mg debounce=%d ms", parsed.threshold_mg, parsed.debounce_ms)
-
-    def _ensure_master_for_control(self, status_key: str, label: str) -> bool:
-        if self._master_registered:
-            return True
-        with self._command_lock:
-            self._command_status[status_key] = "NOT REGISTERED"
-        logger.warning("Rejected %s command: master not registered", label)
-        return False
 
     def initialize_servos(self, servo_types: tuple[int, ...]) -> None:
         """Queue the configured type for every servo and stop continuous channels."""
@@ -214,12 +376,13 @@ class SensorUDPClient:
     def queue_set_servo_type(self, channel: int, servo_type: int) -> None:
         """Queue a servo mode update for one zero-based servo channel."""
         servo_mask = self._servo_mask(channel)
-        status_key = f"servo-{channel}"
-        if not self._ensure_master_for_control(status_key, f"S{channel + 1} mode"):
+        if not self._master_registered:
+            with self._command_lock:
+                self._command_status[f"servo-{channel}"] = "NOT REGISTERED"
             return
         self._queue_command(
             proto.build_set_servo_type(servo_mask, servo_type),
-            status_key,
+            f"servo-{channel}",
             f"S{channel + 1} mode",
             coalesce_key=f"mode-{channel}",
         )
@@ -227,94 +390,95 @@ class SensorUDPClient:
     def queue_set_servo_speed(self, channel: int, speed: int, force: bool = False) -> None:
         """Queue a continuous-servo speed update, coalescing drag updates per channel."""
         servo_mask = self._servo_mask(channel)
-        status_key = f"servo-{channel}"
-        if not self._ensure_master_for_control(status_key, f"S{channel + 1} speed"):
+        if not self._master_registered:
+            with self._command_lock:
+                self._command_status[f"servo-{channel}"] = "NOT REGISTERED"
             return
         self._queue_command(
             proto.build_set_servos_speed(servo_mask, speed),
-            status_key,
+            f"servo-{channel}",
             f"S{channel + 1} speed",
             coalesce_key=f"motion-{channel}",
+            require_ack=False,
         )
 
     def queue_set_servo_angle(self, channel: int, angle: int, force: bool = False) -> None:
         """Queue a positional-servo angle update, coalescing drag updates per channel."""
         servo_mask = self._servo_mask(channel)
-        status_key = f"servo-{channel}"
-        if not self._ensure_master_for_control(status_key, f"S{channel + 1} angle"):
+        if not self._master_registered:
+            with self._command_lock:
+                self._command_status[f"servo-{channel}"] = "NOT REGISTERED"
             return
         self._queue_command(
             proto.build_set_servos_angle(servo_mask, angle),
-            status_key,
+            f"servo-{channel}",
             f"S{channel + 1} angle",
             coalesce_key=f"motion-{channel}",
+            require_ack=False,
         )
 
     def queue_set_led_color(self, led_mask: int, red: int, green: int, blue: int, brightness: int) -> None:
         """Queue a color update for one or more LEDs."""
-        status_key = "led-color"
-        if not self._ensure_master_for_control(status_key, f"LED 0x{led_mask:02X} color"):
+        if not self._master_registered:
+            with self._command_lock:
+                self._command_status["led-color"] = "NOT REGISTERED"
             return
         self._queue_command(
             proto.build_set_led_color(led_mask, red, green, blue, brightness),
-            status_key,
+            "led-color",
             f"LED 0x{led_mask:02X} color",
             coalesce_key="led-color",
+            require_ack=False,
         )
 
     def queue_set_huskylens_illumination(self, enabled: bool) -> None:
         """Queue a HuskyLens illumination LED state update."""
-        if not self._ensure_master_for_control("huskylens-illumination", "HuskyLens illumination"):
-            return
         self._queue_command(
             proto.build_huskylens_set_illumination(enabled),
             "huskylens-illumination",
             "HuskyLens illumination",
             coalesce_key="huskylens-illumination",
+            require_ack=False,
         )
 
     def queue_set_huskylens_algorithm(self, algorithm: int) -> None:
         """Queue a HuskyLens algorithm switch, retaining only the latest request."""
-        if not self._ensure_master_for_control("huskylens-algorithm", "HuskyLens algorithm"):
-            return
         self._queue_command(
             proto.build_huskylens_set_algorithm(algorithm),
             "huskylens-algorithm",
             "HuskyLens algorithm",
             coalesce_key="huskylens-algorithm",
+            require_ack=False,
         )
 
     def queue_set_huskylens_rgb_light(self, enabled: bool) -> None:
         """Queue a HuskyLens RGB/status-light request without touching K10 LEDs."""
-        if not self._ensure_master_for_control("huskylens-rgb-light", "HuskyLens RGB light"):
-            return
         self._queue_command(
             proto.build_huskylens_set_rgb_light(enabled),
             "huskylens-rgb-light",
             "HuskyLens RGB light",
             coalesce_key="huskylens-rgb-light",
+            require_ack=False,
         )
 
     def queue_set_huskylens_display(self, enabled: bool) -> None:
         """Queue a HuskyLens LCD/display request without touching the K10 screen."""
-        if not self._ensure_master_for_control("huskylens-display", "HuskyLens display"):
-            return
         self._queue_command(
             proto.build_huskylens_set_display(enabled),
             "huskylens-display",
             "HuskyLens display",
             coalesce_key="huskylens-display",
+            require_ack=False,
         )
 
     def queue_set_screen(self, screen: int) -> None:
         """Queue selection of a named screen on the physical K10 display."""
-        if not self._ensure_master_for_control("k10-screen", "K10 screen"):
-            return
         self._queue_command(
             proto.build_ui_set_screen(screen),
             "k10-screen",
             "K10 screen",
             coalesce_key="k10-screen",
+            require_ack=False,
         )
 
     def queue_play_sound(self, filename: str) -> None:
@@ -323,6 +487,33 @@ class SensorUDPClient:
             proto.build_sound_play(filename),
             "sound-play",
             f"Play {filename}",
+        )
+
+    def queue_stop_sound(self) -> None:
+        """Queue stop request for the sound playback service."""
+        self._queue_command(
+            proto.build_sound_stop(),
+            "sound-stop",
+            "Stop sound",
+            coalesce_key="sound-stop",
+        )
+
+    def queue_sound_status(self) -> None:
+        """Queue status query for current sound playback state."""
+        self._queue_command(
+            proto.build_sound_status(),
+            "sound-status",
+            "Sound status",
+            coalesce_key="sound-status",
+        )
+
+    def queue_sound_volume(self, percent: int) -> None:
+        """Queue output volume change for sound playback service."""
+        self._queue_command(
+            proto.build_sound_volume(percent),
+            "sound-volume",
+            f"Sound volume {percent}%",
+            coalesce_key="sound-volume",
         )
 
     def queue_stop_all_motors(self) -> None:
@@ -357,27 +548,29 @@ class SensorUDPClient:
         status_key: str,
         label: str,
         coalesce_key: str | None = None,
+        require_ack: bool = True,
         priority: bool = False,
         discard_queued: bool = False,
     ) -> None:
-        repeats_remaining = MOTION_REPEAT_COUNT - 1 if coalesce_key and coalesce_key.startswith("motion-") else 0
-        command = PendingCommand(data, data[0], status_key, label, coalesce_key, repeats_remaining=repeats_remaining)
+        command = PendingCommand(data, data[0], status_key, label, coalesce_key, require_ack)
+        ack_required = require_ack and not self.fire_and_forget
         with self._command_lock:
+            if not ack_required:
+                # Fast-path for high-frequency actuator writes (servo/LED):
+                # send immediately so a lost ACK from a prior command cannot
+                # stall user-perceived control latency.
+                self._command_status[status_key] = "SENT"
+                try:
+                    self._send(command.data)
+                except OSError:
+                    self._command_status[status_key] = "SEND FAILED"
+                return
+
             if discard_queued:
                 for queued in self._command_queue:
                     self._command_status[queued.status_key] = "CANCELLED"
                 self._command_queue.clear()
             elif coalesce_key is not None:
-                if (
-                    coalesce_key.startswith("motion-")
-                    and self._inflight_command is not None
-                    and self._inflight_command.coalesce_key == coalesce_key
-                ):
-                    if self._inflight_command.data == data:
-                        return
-                    self._inflight_command.repeats_remaining = 0
-                if any(queued.coalesce_key == coalesce_key and queued.data == data for queued in self._command_queue):
-                    return
                 self._command_queue = [
                     queued for queued in self._command_queue if queued.coalesce_key != coalesce_key
                 ]
@@ -407,16 +600,6 @@ class SensorUDPClient:
                 return
             if time.monotonic() - command.sent_at < COMMAND_TIMEOUT_S:
                 return
-            if command.repeats_remaining > 0:
-                command.repeats_remaining -= 1
-                command.sent_at = time.monotonic()
-                try:
-                    self._send(command.data)
-                except OSError:
-                    self._command_status[command.status_key] = "SEND FAILED"
-                    self._inflight_command = None
-                    self._send_next_command_locked()
-                return
             self._command_status[command.status_key] = "TIMEOUT"
             self._inflight_command = None
             self._send_next_command_locked()
@@ -429,18 +612,11 @@ class SensorUDPClient:
         self._receiver_thread.start()
 
     def stop(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
         self._stop_event.set()
         for t in (self._heartbeat_thread, self._receiver_thread):
             if t is not None:
                 t.join(timeout=1.0)
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-        self._master_registered = False
+        self.sock.close()
 
     def _heartbeat_loop(self) -> None:
         heartbeat = proto.build_heartbeat()
@@ -458,15 +634,14 @@ class SensorUDPClient:
         while not self._stop_event.is_set():
             try:
                 frame, _ = self.sock.recvfrom(2048)
-            except TimeoutError:
+            except socket.timeout:
                 self._expire_inflight_command()
                 continue
-            except (StopIteration, ValueError, TypeError):
-                break
             except OSError:
                 break
             self._record_packet(self._in_samples, len(frame), outgoing=False)
             self._expire_inflight_command()
+            self._notify_rx_message(frame)
             self._dispatch(frame)
 
     def _dispatch(self, frame: bytes) -> None:
@@ -482,8 +657,6 @@ class SensorUDPClient:
                     self._command_status[command.status_key] = (
                         "OK" if status == proto.RESP_OK else proto.RESP_NAMES.get(status, hex(status))
                     )
-                    if status == proto.RESP_NOT_MASTER:
-                        self._master_registered = False
                     # Log servo responses with human labels (Option B)
                     if command.status_key.startswith("servo-"):
                         ch = int(command.status_key.split("-")[1])
@@ -518,10 +691,25 @@ class SensorUDPClient:
         elif action == proto.make_action(proto.SERVICE_IMU, proto.IMU_BUMP_EVENT_CMD):
             parsed = proto.parse_imu_bump_event(frame)
             if parsed:
-                logger.info("IMU bump: dir=%s x=%d y=%d z=%d", proto.bump_dir_label(parsed.bump_dir),
-                            parsed.accel_x_mg, parsed.accel_y_mg, parsed.accel_z_mg)
+                abs_norm_mg = int(round(math.sqrt(
+                    parsed.accel_x_mg ** 2 + parsed.accel_y_mg ** 2 + parsed.accel_z_mg ** 2
+                )))
+                dyn_norm_mg = abs(abs_norm_mg - 1000)
+                logger.info(
+                    "IMU bump: dir=%s x=%d y=%d z=%d abs=%.2fg dyn=%.2fg",
+                    proto.bump_dir_label(parsed.bump_dir),
+                    parsed.accel_x_mg,
+                    parsed.accel_y_mg,
+                    parsed.accel_z_mg,
+                    abs_norm_mg / 1000.0,
+                    dyn_norm_mg / 1000.0,
+                )
                 self.state.set_imu_bump(parsed)
         elif action == proto.make_action(proto.SERVICE_HUSKYLENS, proto.HUSKYLENS_STREAM_FRAME_CMD):
             parsed = proto.parse_huskylens_frame(frame)
             if parsed:
                 self.state.set_huskylens(parsed)
+        elif action == proto.make_action(proto.SERVICE_SOUND, proto.SOUND_CMD_STATUS):
+            parsed = proto.parse_sound_status(frame)
+            if parsed is not None:
+                logger.info("Sound status: playing=%s", "yes" if parsed.playing else "no")

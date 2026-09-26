@@ -109,7 +109,7 @@ class BotController():
         controls.refresh_sounds()
 
         gamepad = GamepadManager(startup_servo_types, config.servo_angle_limits, config.gamepad_actions)
-        sound = SoundControls(config.ip, config.timeout)
+        sound = SoundControls(config.ip, config.timeout, client)
         last_bump_ts = 0.0
         gamepad.initialize()
         try:
@@ -159,7 +159,7 @@ class BotController():
             algorithm_index=ui_state.huskylens_algorithm_index,
         )
         screen_controls = ScreenControls(client, WINDOW_W, SCREEN_BAND_TOP, selected_screen=ui_state.selected_screen)
-        sound_controls = SoundControls(config.ip, config.timeout)
+        sound_controls = SoundControls(config.ip, config.timeout, client)
         sound_controls.start()
 
         if ui_state.selected_screen is not None:
@@ -225,7 +225,15 @@ class BotController():
         startup_servo_types = ui_state.servo_types if ui_state.servo_types is not None else config.servo_types
 
         state = SensorState()
-        client = SensorUDPClient(config.ip, config.port, config.token, config.timeout, state, lidar_capture)
+        client = SensorUDPClient(
+            config.ip,
+            config.port,
+            config.token,
+            config.timeout,
+            state,
+            lidar_capture,
+            fire_and_forget=config.fire_and_forget,
+        )
 
         try:
             client.register_master()

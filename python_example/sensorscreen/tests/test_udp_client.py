@@ -120,6 +120,59 @@ class TestMasterRegistration:
             client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state)
             client.unregister()  # Should not raise
 
+    def test_request_ignores_unsolicited_stream_frames(self):
+        """_request should skip unrelated async frames and wait for matching action reply."""
+        state = SensorState()
+        with patch('socket.socket') as mock_socket_class:
+            mock_sock = MagicMock()
+            mock_socket_class.return_value = mock_sock
+
+            unsolicited = bytes([0x8F, proto.RESP_OPERATION_FAILED]) + (b"\x00" * 8)
+            expected_ack = bytes([
+                proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_CMD_SET_STREAM),
+                proto.RESP_OK,
+            ])
+            mock_sock.recvfrom.side_effect = [
+                (unsolicited, ("127.0.0.1", 24642)),
+                (_with_udp_trailer(expected_ack), ("127.0.0.1", 24642)),
+            ]
+
+            client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state)
+            reply = client._request(proto.build_lidar_set_stream(True, 2))
+
+            assert reply is not None
+            assert reply[0] == proto.make_action(proto.SERVICE_LIDAR, proto.LIDAR_CMD_SET_STREAM)
+            assert reply[1] == proto.RESP_OK
+
+    def test_register_master_fire_and_forget(self):
+        """Fire-and-forget mode should register without waiting for a reply."""
+        state = SensorState()
+        with patch('socket.socket') as mock_socket_class:
+            mock_sock = MagicMock()
+            mock_socket_class.return_value = mock_sock
+            mock_sock.recvfrom.side_effect = AssertionError("recvfrom should not be called")
+
+            client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state, fire_and_forget=True)
+            client.register_master()
+
+            assert mock_sock.sendto.called
+            sent_data = mock_sock.sendto.call_args[0][0]
+            assert sent_data[0] == proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_REGISTER)
+
+    def test_enable_streams_fire_and_forget(self):
+        """Fire-and-forget mode should send stream setup commands without ACK waits."""
+        state = SensorState()
+        with patch('socket.socket') as mock_socket_class:
+            mock_sock = MagicMock()
+            mock_socket_class.return_value = mock_sock
+            mock_sock.recvfrom.side_effect = AssertionError("recvfrom should not be called")
+
+            client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state, fire_and_forget=True)
+            client.enable_streams(8, 10, 10, 10)
+
+            # lidar distance + lidar intensity + geomag + imu + huskylens
+            assert mock_sock.sendto.call_count == 5
+
 
 class TestHeartbeatThread:
     """Test heartbeat thread lifecycle and timing."""
@@ -223,10 +276,9 @@ class TestCommandQueue:
         try:
             command = proto.build_set_servos_angle(0x01, 90)
             client.queue_set_servo_angle(0, 90)
-            client._dispatch(_with_udp_trailer(bytes([0x24, proto.RESP_OK])))
 
             assert sent == [command]
-            assert client.command_status("servo-0") == "OK"
+            assert client.command_status("servo-0") == "SENT"
         finally:
             client.sock.close()
 
@@ -241,7 +293,6 @@ class TestCommandQueue:
             second = proto.build_set_servos_angle(0x01, 90)
             client.queue_set_servo_angle(0, 45)
             client.queue_set_servo_angle(0, 90)
-            client._dispatch(bytes([0x24, proto.RESP_OK]))
 
             assert sent == [first, second]
         finally:
@@ -279,6 +330,22 @@ class TestCommandQueue:
             with client._command_lock:
                 assert len(client._command_queue) == 0
                 assert client._inflight_command is None
+
+    def test_ack_required_command_is_immediate_in_fire_and_forget_mode(self):
+        """ACK-required UI commands should send immediately in fire-and-forget mode."""
+        state = SensorState()
+        with patch('socket.socket') as mock_socket_class:
+            mock_sock = MagicMock()
+            mock_socket_class.return_value = mock_sock
+
+            client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state, fire_and_forget=True)
+            client._master_registered = True
+            client.queue_set_screen(proto.UI_SCREEN_SENSORS)
+
+            assert client.command_status("k10-screen") == "SENT"
+            with client._command_lock:
+                assert client._inflight_command is None
+                assert len(client._command_queue) == 0
 
 
 class TestFrameReceiver:
@@ -380,6 +447,38 @@ class TestProtocolIntegration:
             
             # Verify command was queued
             assert client.command_status("led-color") in ("QUEUED", "SENT")
+
+
+class TestSoundCommands:
+    """Test SoundService UDP command queue and status dispatch."""
+
+    def test_queue_sound_control_commands(self):
+        state = SensorState()
+        with patch('socket.socket') as mock_socket_class:
+            mock_sock = MagicMock()
+            mock_socket_class.return_value = mock_sock
+
+            client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state)
+            client.queue_sound_status()
+            client.queue_sound_volume(55)
+            client.queue_stop_sound()
+
+            assert client.command_status("sound-status") in ("QUEUED", "SENT")
+            assert client.command_status("sound-volume") in ("QUEUED", "SENT")
+            assert client.command_status("sound-stop") in ("QUEUED", "SENT")
+
+    def test_dispatch_sound_status_acknowledges_command(self):
+        state = SensorState()
+        client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state)
+        sent: list[bytes] = []
+        client._send = lambda data, count=True: sent.append(data)
+        try:
+            client.queue_sound_status()
+            client._dispatch(_with_udp_trailer(bytes([0xB3, proto.RESP_OK, 0x01])))
+            assert sent == [bytes([0xB3])]
+            assert client.command_status("sound-status") == "OK"
+        finally:
+            client.sock.close()
 
 
 class TestPacketStats:
