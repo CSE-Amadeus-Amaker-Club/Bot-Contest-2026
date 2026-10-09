@@ -111,6 +111,7 @@ class BotController():
         gamepad = GamepadManager(startup_servo_types, config.servo_angle_limits, config.gamepad_actions)
         sound = SoundControls(config.ip, config.timeout, client)
         last_bump_ts = 0.0
+        gamepad_enabled = True
         gamepad.initialize()
         try:
             while controls.running:
@@ -120,8 +121,14 @@ class BotController():
                 except tk_module.TclError:
                     break
 
-                gamepad.handle_events(client, controls)
-                gamepad.apply_controls(client, controls)
+                if gamepad_enabled:
+                    try:
+                        gamepad.handle_events(client, controls)
+                        gamepad.apply_controls(client, controls)
+                    except Exception:
+                        logger.exception("Gamepad disabled after control error")
+                        gamepad.set_safe_positions(client, controls)
+                        gamepad_enabled = False
 
                 snapshot = state.snapshot()
                 if snapshot.imu_bump_ts > last_bump_ts:
@@ -177,11 +184,18 @@ class BotController():
 
         gamepad = GamepadManager(startup_servo_types, config.servo_angle_limits, config.gamepad_actions)
         last_bump_ts = 0.0
+        gamepad_enabled = True
         gamepad.initialize()
         try:
             while True:
-                gamepad.handle_events(client, servo_controls)
-                gamepad.apply_controls(client, servo_controls)
+                if gamepad_enabled:
+                    try:
+                        gamepad.handle_events(client, servo_controls)
+                        gamepad.apply_controls(client, servo_controls)
+                    except Exception:
+                        logger.exception("Gamepad disabled after control error")
+                        gamepad.set_safe_positions(client, servo_controls)
+                        gamepad_enabled = False
 
                 snapshot = state.snapshot()
                 if snapshot.imu_bump_ts > last_bump_ts:

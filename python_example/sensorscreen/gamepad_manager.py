@@ -7,7 +7,9 @@ import builtins
 import importlib
 import inspect
 import logging
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Protocol
 
 try:
@@ -15,16 +17,24 @@ try:
 except ImportError:
     pygame :type|None = None
 
+try:
+    sdl_controller = importlib.import_module("pygame._sdl2.controller")
+except ImportError:
+    sdl_controller = None
+
 import protocol as proto
+from gamepad_callbacks import mix_track_speeds, set_track_drive
 
 
 class ServoValueSink(Protocol):
     def set_external_value(self, channel: int, value: int) -> None: ...
+    def servo_types(self) -> tuple[int, ...]: ...
 
 logger = logging.getLogger("sensorscreen")
 
 JOYSTICK_DEADZONE = 0.12
 JOYSTICK_TRIGGER_DEADZONE = 0.08
+JOYSTICK_TRIGGER_PRECISION = 3
 JOYSTICK_LEFT_X_AXIS = 0
 JOYSTICK_LEFT_Y_AXIS = 1
 JOYSTICK_RIGHT_X_AXIS = 2
@@ -39,10 +49,27 @@ JOYSTICK_LEFT_BUMPER_BUTTON = 4
 JOYSTICK_RIGHT_BUMPER_BUTTON = 5
 JOYSTICK_GUIDE_BUTTON = 8
 
+JOYSTICK_AXIS_DEFAULTS = {
+    "left_stick_x": JOYSTICK_LEFT_X_AXIS,
+    "left_stick_y": JOYSTICK_LEFT_Y_AXIS,
+    "right_stick_x": JOYSTICK_RIGHT_X_AXIS,
+    "right_stick_y": JOYSTICK_RIGHT_Y_AXIS,
+    "left_trigger": JOYSTICK_LEFT_TRIGGER_AXIS,
+    "right_trigger": JOYSTICK_RIGHT_TRIGGER_AXIS,
+}
+SDL_AXIS_KEYS = {
+    "left_stick_x": "leftx",
+    "left_stick_y": "lefty",
+    "right_stick_x": "rightx",
+    "right_stick_y": "righty",
+    "left_trigger": "lefttrigger",
+    "right_trigger": "righttrigger",
+}
+
 SERVO_1_CHANNEL = 0
 SERVO_2_CHANNEL = 1
-SERVO_3_CHANNEL = 2
 SERVO_4_CHANNEL = 3
+SERVO_5_CHANNEL = 4
 LED_MASK_ALL = 0x1F
 LED_BRIGHTNESS = 255
 
@@ -92,6 +119,8 @@ class GamepadActionContext:
     client: Any
     servo_controls: ServoValueSink
     manager: GamepadManager
+    inputs: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    raw_axes: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
 
 
 class GamepadManager:
@@ -105,21 +134,15 @@ class GamepadManager:
         self._servo_angle_limits = servo_angle_limits
         self._gamepad_actions = gamepad_actions or {}
         self._joystick = None
+        self._axis_indices = dict(JOYSTICK_AXIS_DEFAULTS)
         self._previous: dict[str, int] = {}
         self._previous_inputs: dict[str, Any] = {}
-        self._has_logged_mapping_error = False
+        self._mapping_errors: set[str] = set()
+        self._inputs: Mapping[str, Any] = MappingProxyType({})
+        self._raw_axes: Mapping[str, float] = MappingProxyType({})
         self._has_logged_rumble_error = False
         self._rumble_supported = True
 
-        self._mapping_is_valid = (
-            self._servo_types[SERVO_1_CHANNEL] == proto.SERVO_TYPE_CONTINUOUS
-            and self._servo_types[SERVO_2_CHANNEL] == proto.SERVO_TYPE_CONTINUOUS
-            and self._servo_types[SERVO_3_CHANNEL] != proto.SERVO_TYPE_CONTINUOUS
-            and self._servo_types[SERVO_4_CHANNEL] != proto.SERVO_TYPE_CONTINUOUS
-        )
-
-        self._servo_3_min, self._servo_3_max = self._resolve_angle_limits(SERVO_3_CHANNEL)
-        self._servo_4_min, self._servo_4_max = self._resolve_angle_limits(SERVO_4_CHANNEL)
         self._compiled_actions = self._compile_actions(self._gamepad_actions)
         self._legacy_mode = len(self._compiled_actions) == 0
 
@@ -129,6 +152,7 @@ class GamepadManager:
 
     @joystick.setter
     def joystick(self, value) -> None:
+        self._reset_inputs()
         self._joystick = value
 
     def initialize(self) -> None:
@@ -137,7 +161,7 @@ class GamepadManager:
             return
         pygame.init()
         if pygame.joystick.get_count() > 0:
-            self._joystick = self._open_joystick(0)
+            self.joystick = self._open_joystick(0)
         else:
             logger.info("No controller connected; waiting for one to be attached")
 
@@ -156,7 +180,7 @@ class GamepadManager:
             return
         for event in pygame.event.get():
             if event.type == pygame.JOYDEVICEADDED and self._joystick is None:
-                self._joystick = self._open_joystick(event.device_index)
+                self.joystick = self._open_joystick(event.device_index)
             elif (
                 event.type == pygame.JOYDEVICEREMOVED
                 and self._joystick is not None
@@ -164,8 +188,9 @@ class GamepadManager:
             ):
                 logger.info("Controller disconnected")
                 self.set_safe_positions(client, servo_controls)
-                self._joystick = None
-                self._previous.clear()
+                self.joystick = None
+            elif event.type == pygame.JOYHATMOTION and self._joystick is not None and not self._legacy_mode:
+                self._handle_hat(event.value, client, servo_controls)
             elif event.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP) and self._joystick is not None:
                 if self._legacy_mode:
                     if event.type == pygame.JOYBUTTONDOWN:
@@ -181,92 +206,153 @@ class GamepadManager:
                         continue
                     self._run_action(button_key, event.type == pygame.JOYBUTTONDOWN, client, servo_controls)
 
+    def _handle_hat(self, hat_value, client, servo_controls: ServoValueSink) -> None:
+        """Fire pad_* actions on the press edge of each D-pad direction."""
+        x, y = hat_value
+        current = {"pad_up": y > 0, "pad_down": y < 0, "pad_left": x < 0, "pad_right": x > 0}
+        for key, pressed in current.items():
+            was_pressed = self._previous_inputs.get(key, False)
+            self._previous_inputs[key] = pressed
+            if pressed and not was_pressed:
+                self._run_action(key, True, client, servo_controls)
+
     def apply_controls(self, client, servo_controls: ServoValueSink) -> None:
+        self._refresh_servo_types(servo_controls)
         if self._joystick is None:
-            if self._previous:
+            if self._previous or self._previous_inputs:
                 self.set_safe_positions(client, servo_controls)
-                self._previous.clear()
-                self._previous_inputs.clear()
+                self._reset_inputs()
             return
 
-        if self._legacy_mode:
-            self._apply_legacy_controls(client, servo_controls)
-            raise Exception("No Control applied.")
-            # return
-
+        axes = tuple(self._joystick.get_axis(axis) for axis in range(self._joystick.get_numaxes()))
+        stick_axes = {
+            key: self._axis_indices[key]
+            for key in ("left_stick_x", "left_stick_y", "right_stick_x", "right_stick_y")
+        }
+        self._raw_axes = MappingProxyType({
+            key: axes[axis] if axis < len(axes) else 0.0 for key, axis in stick_axes.items()
+        })
         values: dict[str, Any] = {
-            "left_stick_x": self._stick_speed(self._joystick, JOYSTICK_LEFT_X_AXIS),
-            "left_stick_y": self._stick_speed(self._joystick, JOYSTICK_LEFT_Y_AXIS),
-            "right_stick_x": self._stick_speed(self._joystick, JOYSTICK_RIGHT_X_AXIS),
-            "right_stick_y": self._stick_speed(self._joystick, JOYSTICK_RIGHT_Y_AXIS),
-            "left_trigger": self._trigger_position(self._joystick, JOYSTICK_LEFT_TRIGGER_AXIS),
-            "right_trigger": self._trigger_position(self._joystick, JOYSTICK_RIGHT_TRIGGER_AXIS),
+            key: self._speed_from_axis(value) for key, value in self._raw_axes.items()
+        }
+        for key in ("left_trigger", "right_trigger"):
+            axis = self._axis_indices[key]
+            values[key] = self._trigger_ratio(axes[axis]) if axis < len(axes) else 0.0
+        values.update({
             "left_bumper": self._read_button(self._joystick, JOYSTICK_LEFT_BUMPER_BUTTON),
             "right_bumper": self._read_button(self._joystick, JOYSTICK_RIGHT_BUMPER_BUTTON),
-        }
+        })
+        self._inputs = MappingProxyType(values)
+        if self._legacy_mode:
+            self._apply_legacy_controls(client, servo_controls)
+            return
+
         for key in POLLED_INPUT_KEYS:
             if key not in self._compiled_actions:
                 continue
             current = values[key]
-            if self._previous_inputs.get(key) == current:
+            observed = (
+                self._raw_axes[key]
+                if self._compiled_actions[key].callback is set_track_drive and key in self._raw_axes
+                else current
+            )
+            if self._previous_inputs.get(key) == observed:
                 continue
-            self._previous_inputs[key] = current
+            self._previous_inputs[key] = observed
             self._run_action(key, current, client, servo_controls)
 
     def _apply_legacy_controls(self, client, servo_controls: ServoValueSink) -> None:
+        if not (
+            self._servo_types[SERVO_1_CHANNEL] == proto.SERVO_TYPE_CONTINUOUS
+            and self._servo_types[SERVO_2_CHANNEL] == proto.SERVO_TYPE_CONTINUOUS
+            and self._servo_types[SERVO_4_CHANNEL] != proto.SERVO_TYPE_CONTINUOUS
+            and self._servo_types[SERVO_5_CHANNEL] != proto.SERVO_TYPE_CONTINUOUS
+        ):
+            self._log_mapping_error("Joystick requires continuous S1/S2 and positional S4/S5")
+            return
+        context = self._action_context(client, servo_controls)
+        self.apply_track_drive(SERVO_1_CHANNEL, SERVO_2_CHANNEL, context)
+        self.apply_paired_angle("left", SERVO_4_CHANNEL, context)
+        self.apply_paired_angle("right", SERVO_5_CHANNEL, context)
 
-    #     if not self._mapping_is_valid:
-    #         if not self._has_logged_mapping_error:
-    #             logger.error("Joystick mapping requires continuous servos on channels 0/1 and positional servos on 2/3")
-    #             self._has_logged_mapping_error = True
-    #         return
+    def _action_context(self, client, servo_controls: ServoValueSink) -> GamepadActionContext:
+        return GamepadActionContext(client, servo_controls, self, self._inputs, self._raw_axes)
 
-    #     servo_3_position = max(
-    #         1.0 if self._read_button(self._joystick, JOYSTICK_LEFT_BUMPER_BUTTON) else 0.0,
-    #         self._trigger_position(self._joystick, JOYSTICK_LEFT_TRIGGER_AXIS),
-    #     )
-    #     servo_4_position = max(
-    #         1.0 if self._read_button(self._joystick, JOYSTICK_RIGHT_BUMPER_BUTTON) else 0.0,
-    #         self._trigger_position(self._joystick, JOYSTICK_RIGHT_TRIGGER_AXIS),
-    #     )
+    def _reset_inputs(self) -> None:
+        self._previous.clear()
+        self._previous_inputs.clear()
 
-    #     values = {
-    #         "servo_1_speed": self._stick_speed(self._joystick, JOYSTICK_LEFT_Y_AXIS),
-    #         "servo_2_speed": self._stick_speed(self._joystick, JOYSTICK_RIGHT_Y_AXIS),
-    #         "servo_3_angle": round(self._servo_3_min + (self._servo_3_max - self._servo_3_min) * servo_3_position),
-    #         "servo_4_angle": round(self._servo_4_min + (self._servo_4_max - self._servo_4_min) * servo_4_position),
-    #     }
+    def _refresh_servo_types(self, servo_controls: ServoValueSink) -> None:
+        accessor = getattr(servo_controls, "servo_types", None)
+        current = tuple(accessor()) if accessor is not None else self._servo_types
+        if current != self._servo_types:
+            self._servo_types = current
+            self._reset_inputs()
+            self._mapping_errors.clear()
 
-    #     if self._previous.get("servo_1_speed") != values["servo_1_speed"]:
-    #         client.queue_set_servo_speed(SERVO_1_CHANNEL, values["servo_1_speed"])
-    #     if self._previous.get("servo_2_speed") != values["servo_2_speed"]:
-    #         client.queue_set_servo_speed(SERVO_2_CHANNEL, values["servo_2_speed"])
-    #     if self._previous.get("servo_3_angle") != values["servo_3_angle"]:
-    #         client.queue_set_servo_angle(SERVO_3_CHANNEL, values["servo_3_angle"])
-    #     if self._previous.get("servo_4_angle") != values["servo_4_angle"]:
-    #         client.queue_set_servo_angle(SERVO_4_CHANNEL, values["servo_4_angle"])
+    def _log_mapping_error(self, message: str) -> None:
+        if message not in self._mapping_errors:
+            logger.error(message)
+            self._mapping_errors.add(message)
 
-    #     servo_controls.set_external_value(SERVO_1_CHANNEL, values["servo_1_speed"])
-    #     servo_controls.set_external_value(SERVO_2_CHANNEL, values["servo_2_speed"])
-    #     servo_controls.set_external_value(SERVO_3_CHANNEL, values["servo_3_angle"])
-    #     servo_controls.set_external_value(SERVO_4_CHANNEL, values["servo_4_angle"])
-    #     self._previous.update(values)
-        pass
+    def _send_paired_value(self, channel: int, value: int, continuous: bool, context: GamepadActionContext) -> None:
+        key = f"{'speed' if continuous else 'angle'}-{channel}"
+        if self._previous.get(key) != value:
+            if continuous:
+                context.client.queue_set_servo_speed(channel, value)
+            else:
+                context.client.queue_set_servo_angle(channel, value)
+            self._previous[key] = value
+        context.servo_controls.set_external_value(channel, value)
+
+    def apply_track_drive(self, leftchannel: int, rightchannel: int, context: GamepadActionContext) -> None:
+        """Apply one coherent track calculation, suppressing duplicate outputs within a poll."""
+        if leftchannel == rightchannel or any(
+            self._servo_types[channel] != proto.SERVO_TYPE_CONTINUOUS for channel in (leftchannel, rightchannel)
+        ):
+            self._log_mapping_error("Track mapping requires two distinct continuous servo channels")
+            return
+        speeds = mix_track_speeds(
+            context.raw_axes.get("left_stick_x", 0.0),
+            context.raw_axes.get("left_stick_y", 0.0), JOYSTICK_DEADZONE,
+        )
+        for channel, speed in zip((leftchannel, rightchannel), speeds):
+            self._send_paired_value(channel, speed, True, context)
+
+    def apply_paired_angle(self, side: str, channel: int, context: GamepadActionContext) -> None:
+        """Resolve the same-side bumper and trigger using the shared mechanical limits."""
+        if self._servo_types[channel] == proto.SERVO_TYPE_CONTINUOUS:
+            self._log_mapping_error(f"S{channel + 1} requires an angular servo for {side} controls")
+            return
+        try:
+            minimum, maximum = self._resolve_angle_limits(channel)
+        except ValueError as exc:
+            self._log_mapping_error(str(exc))
+            return
+        ratio = max(float(context.inputs.get(f"{side}_trigger", 0.0)),
+                    1.0 if context.inputs.get(f"{side}_bumper", False) else 0.0)
+        self._send_paired_value(channel, round(minimum + (maximum - minimum) * ratio), False, context)
 
     def _run_action(self, input_key: str, value: Any, client: Any, servo_controls: ServoValueSink) -> None:
         action = self._compiled_actions.get(input_key)
         if action is None:
             return
+        # For button mappings without $value, run once on press and ignore release.
+        if input_key.startswith("button_") and not action.value_argument_names and value is False:
+            return
         call_kwargs = dict(action.kwargs)
         for name in action.value_argument_names:
             call_kwargs[name] = value
         if action.pass_context:
-            call_kwargs["context"] = GamepadActionContext(client=client, servo_controls=servo_controls, manager=self)
+            call_kwargs["context"] = self._action_context(client, servo_controls)
         if action.pass_client:
             call_kwargs["client"] = client
         if action.pass_servo_controls:
             call_kwargs["servo_controls"] = servo_controls
-        action.callback(**call_kwargs)
+        try:
+            action.callback(**call_kwargs)
+        except Exception:
+            logger.exception("Gamepad action '%s' failed", input_key)
 
     def _compile_actions(self, gamepad_actions: dict[str, str]) -> dict[str, _CompiledAction]:
         compiled: dict[str, _CompiledAction] = {}
@@ -355,13 +441,20 @@ class GamepadManager:
         raise ValueError("callback path must be a dotted function reference")
 
     def set_safe_positions(self, client, servo_controls: ServoValueSink) -> None:
-        for channel in (SERVO_1_CHANNEL, SERVO_2_CHANNEL, SERVO_3_CHANNEL, SERVO_4_CHANNEL):
+        self._refresh_servo_types(servo_controls)
+        for channel in range(proto.SERVO_COUNT):
             if self._servo_types[channel] == proto.SERVO_TYPE_CONTINUOUS:
                 client.queue_set_servo_speed(channel, 0, force=True)
+                servo_controls.set_external_value(channel, 0)
             else:
-                target = self._servo_3_min if channel == SERVO_3_CHANNEL else self._servo_4_min if channel == SERVO_4_CHANNEL else 0
+                try:
+                    target, _ = self._resolve_angle_limits(channel)
+                except ValueError as exc:
+                    self._log_mapping_error(str(exc))
+                    continue
                 client.queue_set_servo_angle(channel, target, force=True)
-            servo_controls.set_external_value(channel, 0)
+                servo_controls.set_external_value(channel, target)
+        self._reset_inputs()
 
     def try_rumble(self, low: float, high: float, duration_ms: int) -> bool:
         if pygame is None or self._joystick is None or not self._rumble_supported:
@@ -386,17 +479,48 @@ class GamepadManager:
         configured = self._servo_angle_limits[channel]
         if configured is None:
             return (0, default_max)
+        if not 0 <= configured[0] <= configured[1] <= default_max:
+            raise ValueError(f"S{channel + 1} angle limits are incompatible with its current servo type")
         return configured
 
     def _open_joystick(self, device_index: int):
+        if pygame is None:
+            return None
         try:
             joystick = pygame.joystick.Joystick(device_index)
             joystick.init()
+            self._axis_indices = dict(JOYSTICK_AXIS_DEFAULTS)
+            self._load_axis_mapping(device_index, joystick.get_numaxes())
             logger.info("Controller connected: %s", joystick.get_name())
+            logger.info("Controller axis mapping: %s", self._axis_indices)
             return joystick
         except Exception as exc:
             logger.warning("Unable to open controller %d: %s", device_index, exc)
             return None
+
+    def _load_axis_mapping(self, device_index: int, axis_count: int) -> None:
+        """Use SDL's device-specific axis bindings while retaining fallback indices."""
+        if sdl_controller is None or pygame is None:
+            return
+        try:
+            sdl_controller.init()
+            if not sdl_controller.is_controller(device_index):
+                return
+            controller = sdl_controller.Controller(device_index)
+            try:
+                mapping = controller.get_mapping()
+            finally:
+                controller.quit()
+            for key, sdl_key in SDL_AXIS_KEYS.items():
+                binding = mapping.get(sdl_key, "")
+                if binding.startswith("a") and binding[1:].isdigit():
+                    axis = int(binding[1:])
+                    if axis < axis_count:
+                        self._axis_indices[key] = axis
+                else:
+                    logger.warning("Unsupported SDL axis binding for %s: %s; using fallback", key, binding)
+        except (pygame.error, RuntimeError, ValueError) as exc:
+            logger.warning("Unable to read SDL controller mapping; using fallback axes: %s", exc)
 
     @staticmethod
     def _read_button(joystick, button: int) -> bool:
@@ -406,14 +530,23 @@ class GamepadManager:
     def _trigger_position(joystick, axis: int) -> float:
         if axis >= joystick.get_numaxes():
             return 0.0
-        position = min(1.0, max(0.0, (joystick.get_axis(axis) + 1.0) / 2.0))
+        return GamepadManager._trigger_ratio(joystick.get_axis(axis))
+
+    @staticmethod
+    def _trigger_ratio(value: float) -> float:
+        position = min(1.0, max(0.0, (value + 1.0) / 2.0))
         if position <= JOYSTICK_TRIGGER_DEADZONE:
             return 0.0
-        return (position - JOYSTICK_TRIGGER_DEADZONE) / (1.0 - JOYSTICK_TRIGGER_DEADZONE)
+        normalized = (position - JOYSTICK_TRIGGER_DEADZONE) / (1.0 - JOYSTICK_TRIGGER_DEADZONE)
+        return round(normalized, JOYSTICK_TRIGGER_PRECISION)
 
     @staticmethod
     def _stick_speed(joystick, axis: int) -> int:
         if axis >= joystick.get_numaxes():
             return 0
-        speed = -round(joystick.get_axis(axis) * 100)
+        return GamepadManager._speed_from_axis(joystick.get_axis(axis))
+
+    @staticmethod
+    def _speed_from_axis(value: float) -> int:
+        speed = -round(value * 100)
         return 0 if abs(speed) < round(JOYSTICK_DEADZONE * 100) else speed

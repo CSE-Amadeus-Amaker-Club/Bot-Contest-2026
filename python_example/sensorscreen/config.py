@@ -68,6 +68,10 @@ GAMEPAD_ACTION_KEYS = {
     "button_lb",
     "button_rb",
     "button_guide",
+    "pad_up",
+    "pad_down",
+    "pad_left",
+    "pad_right",
 }
 
 GAMEPAD_KEY_ALIASES = {

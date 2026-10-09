@@ -1,9 +1,9 @@
 [ui]
-huskylens_algorithm_index = 3
+huskylens_algorithm_index = 5
 huskylens_illumination_enabled = 0
 huskylens_rgb_light_enabled = 0
 huskylens_display_enabled = 0
-selected_screen = 2
+selected_screen = 6
 s1_type = 2
 s2_type = 2
 s3_type = 1

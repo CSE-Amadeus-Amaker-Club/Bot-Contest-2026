@@ -17,7 +17,7 @@ from state import SensorState
 
 logger = logging.getLogger("sensorscreen.udp")
 
-HEARTBEAT_INTERVAL_S = 0.03  # well under the firmware's 50ms watchdog
+HEARTBEAT_INTERVAL_S = 0.025  # keep margin under the firmware's 50ms watchdog
 COMMAND_TIMEOUT_S = 1.0
 PACKET_RATE_WINDOW_S = 2.0
 
@@ -74,6 +74,8 @@ class SensorUDPClient:
         self._out_samples: deque[tuple[float, int]] = deque()
         self._in_samples: deque[tuple[float, int]] = deque()
         self._master_registered = False
+        self._requested_servo_types: list[int | None] = [None] * proto.SERVO_COUNT
+        self._potentially_continuous_mask = 0
         self._rx_message_callback: Callable[[str], None] | None = None
 
     def set_rx_message_callback(self, callback: Callable[[str], None] | None) -> None:
@@ -282,11 +284,6 @@ class SensorUDPClient:
             )
 
     def register_master(self) -> None:
-        if self.fire_and_forget:
-            self._send(proto.build_master_register(self.token))
-            self._master_registered = True
-            return
-
         # Firmware reply is the standard 2-byte ack: [action][resp_code].
         resp = self._request(proto.build_master_register(self.token))
         if resp is None or len(resp) < 2:
@@ -517,7 +514,7 @@ class SensorUDPClient:
         )
 
     def queue_stop_all_motors(self) -> None:
-        """Immediately send firmware emergency stop and cancel pending motion commands."""
+        """Cancel pending commands and immediately stop candidate continuous servos and DC motors."""
         stop_action = proto.build_stop_all_motors()[0]
         with self._command_lock:
             if self._inflight_command is not None:
@@ -526,6 +523,18 @@ class SensorUDPClient:
             for queued in self._command_queue:
                 self._command_status[queued.status_key] = "CANCELLED"
             self._command_queue.clear()
+            if self._master_registered:
+                for channel in range(proto.SERVO_COUNT):
+                    servo_mask = 1 << channel
+                    if not self._potentially_continuous_mask & servo_mask:
+                        continue
+                    status_key = f"servo-{channel}"
+                    try:
+                        self._send(proto.build_set_servos_speed(servo_mask, 0))
+                        self._command_status[status_key] = "SENT"
+                    except OSError:
+                        self._command_status[status_key] = "SEND FAILED"
+                        logger.warning("Unable to send continuous-servo stop for S%d", channel + 1)
             self._command_status["stop-all"] = "SENT"
             try:
                 self._send(bytes([stop_action]))
@@ -555,6 +564,13 @@ class SensorUDPClient:
         command = PendingCommand(data, data[0], status_key, label, coalesce_key, require_ack)
         ack_required = require_ack and not self.fire_and_forget
         with self._command_lock:
+            if command.action == proto.make_action(proto.SERVICE_MOTOR_SERVO, proto.MOTOR_SERVO_CMD_SET_SERVO_TYPE):
+                for channel in range(proto.SERVO_COUNT):
+                    servo_mask = 1 << channel
+                    if data[1] & servo_mask:
+                        self._requested_servo_types[channel] = data[2]
+                        if data[2] == proto.SERVO_TYPE_CONTINUOUS:
+                            self._potentially_continuous_mask |= servo_mask
             if not ack_required:
                 # Fast-path for high-frequency actuator writes (servo/LED):
                 # send immediately so a lost ACK from a prior command cannot
@@ -633,10 +649,15 @@ class SensorUDPClient:
         self.sock.settimeout(0.5)
         while not self._stop_event.is_set():
             try:
-                frame, _ = self.sock.recvfrom(2048)
+                received = self.sock.recvfrom(2048)
+                if not isinstance(received, tuple) or len(received) != 2:
+                    continue
+                frame, _ = received
             except socket.timeout:
                 self._expire_inflight_command()
                 continue
+            except StopIteration:
+                break
             except OSError:
                 break
             self._record_packet(self._in_samples, len(frame), outgoing=False)

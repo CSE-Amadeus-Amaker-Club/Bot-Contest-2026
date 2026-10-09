@@ -95,12 +95,54 @@ injects runtime control values through `$value`.
 Example:
 
 ```ini
+[servos]
+s1_type = continuous
+s2_type = continuous
+s4_type = angle270
+s4_min_angle = 45
+s4_max_angle = 120
+s5_type = angle270
+s5_min_angle = 140
+s5_max_angle = 270
+
 [gamepad]
-left_bumper = gamepad_callbacks.set_angle(servonumber=2,minvalue=0,maxvalue=270,bumpervalue=$value)
-left_trigger = gamepad_callbacks.set_angle(servonumber=2,minvalue=0,maxvalue=270,triggervalue=$value)
-left_stick_y = gamepad_callbacks.set_speed(servonumber=0,speedvalue=$value)
+left_stick_x = gamepad_callbacks.set_track_drive(leftchannel=0,rightchannel=1)
+left_stick_y = gamepad_callbacks.set_track_drive(leftchannel=0,rightchannel=1)
+left_bumper = gamepad_callbacks.set_paired_angle(side="left",servonumber=3)
+left_trigger = gamepad_callbacks.set_paired_angle(side="left",servonumber=3)
+right_bumper = gamepad_callbacks.set_paired_angle(side="right",servonumber=4)
+right_trigger = gamepad_callbacks.set_paired_angle(side="right",servonumber=4)
 button_a = gamepad_callbacks.set_led(red=0,green=255,blue=0,buttonvalue=$value)
 ```
+
+Servo numbers are zero-based: S1=0, S2=1, S4=3, S5=4. `set_track_drive`
+uses both left-stick axes: up/down drives both tracks forward/backward; left
+turns S1 forward and S2 backward, and right reverses that turn. Inputs outside
+the 12% centered deadzone are rescaled progressively; diagonal inputs are
+proportionally limited to preserve steering without exceeding 100% speed.
+The right stick does not drive the tracks in this mapping.
+
+`set_paired_angle` reads both same-side controls from one snapshot. The trigger
+sets position within `[servos]` limits; the bumper holds the maximum. Releasing
+the bumper resumes the current trigger position. Releasing both returns to
+the configured minimum. These same limits apply on controller disconnect.
+With no `[gamepad]` actions, the built-in mapping uses the same S1/S2 and S4/S5
+assignments. Existing `set_speed` and `set_angle` callbacks remain available
+for independent custom mappings.
+
+Recognized controllers use SDL's device-specific axis mapping, logged when
+connected. For example, the USB Xbox 360 layout uses left-stick axes 0/1,
+left trigger axis 2, right-stick axes 3/4, and right trigger axis 5.
+Trigger axes are released=-1 and pressed=+1; bumper buttons remain 4/5.
+If SDL mapping is unavailable, the client falls back to stick axes 0/1 and
+2/3 with trigger axes 4/5. Verify the logged mapping, directions, and limits
+with tracks raised before ground operation.
+
+On exit or Stop All, the client cancels pending commands and explicitly sends
+zero-speed packets individually to channels configured as continuous during
+the session, before sending the DC-motor stop command. Separate packets prevent
+a now-positional channel from causing firmware to reject the entire servo
+stop mask. UDP stopping is best-effort, not a guaranteed hardware acknowledgement.
 
 Supported keys:
 - `left_stick_x`, `left_stick_y`, `right_stick_x`, `right_stick_y`

@@ -793,6 +793,10 @@ class TkControlWindow:
             self._servo_last_sent_time[channel] = time.time()
             self._update_servo_status_display()
 
+    def servo_types(self) -> tuple[int, ...]:
+        """Return the currently selected servo modes for gamepad validation."""
+        return tuple(self._servo_types)
+
     def set_external_value(self, channel: int, value: int) -> None:
         if not 0 <= channel < len(self._servo_widgets):
             return

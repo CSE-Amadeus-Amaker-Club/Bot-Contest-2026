@@ -321,7 +321,7 @@ def build_set_servos_angle(servo_mask: int, angle: int) -> bytes:
 
 
 def build_stop_all_motors() -> bytes:
-    """Build [0x28], which stops DC motors and continuous servo channels."""
+    """Build [0x28] to stop DC motor ports; continuous servos require zero-speed commands."""
     return bytes([make_action(SERVICE_MOTOR_SERVO, MOTOR_SERVO_CMD_STOP_ALL_MOTORS)])
 
 

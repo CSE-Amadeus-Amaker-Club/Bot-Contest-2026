@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import protocol as proto
@@ -14,6 +16,65 @@ from udp_client import SensorUDPClient, MasterRegistrationError
 
 def _with_udp_trailer(frame: bytes, rx_seq: int = 1, server_millis: int = 1234) -> bytes:
     return frame + rx_seq.to_bytes(4, "big") + server_millis.to_bytes(4, "big")
+
+
+@pytest.mark.parametrize("fire_and_forget", [False, True])
+def test_stop_sends_individual_continuous_zeros_and_cancels_pending_types(fire_and_forget):
+    with patch("socket.socket") as socket_class:
+        sock = socket_class.return_value
+        client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, SensorState(),
+                                 fire_and_forget=fire_and_forget)
+        client._master_registered = True
+        client.queue_set_servo_type(0, proto.SERVO_TYPE_CONTINUOUS)
+        client.queue_set_servo_type(1, proto.SERVO_TYPE_CONTINUOUS)
+        client.queue_set_servo_type(0, proto.SERVO_TYPE_180)
+        if not fire_and_forget:
+            assert client._inflight_command is not None
+            assert client._command_queue
+        sock.sendto.reset_mock()
+
+        client.queue_stop_all_motors()
+
+        assert [call.args[0] for call in sock.sendto.call_args_list] == [
+            proto.build_set_servos_speed(1, 0), proto.build_set_servos_speed(2, 0),
+            proto.build_stop_all_motors(),
+        ]
+        assert client._command_queue == []
+        assert client._inflight_command is None
+        client._dispatch(bytes([0x22, proto.RESP_OK]))
+        client._expire_inflight_command()
+        assert sock.sendto.call_count == 3
+
+
+def test_continuous_stop_send_failure_does_not_skip_other_stops():
+    with patch("socket.socket") as socket_class:
+        sock = socket_class.return_value
+        client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, SensorState(), fire_and_forget=True)
+        client._master_registered = True
+        client.queue_set_servo_type(0, proto.SERVO_TYPE_CONTINUOUS)
+        client.queue_set_servo_type(1, proto.SERVO_TYPE_CONTINUOUS)
+        sock.sendto.reset_mock()
+        sock.sendto.side_effect = [OSError("offline"), None, None, None]
+
+        client.queue_stop_all_motors()
+        client.unregister()
+
+        assert [call.args[0] for call in sock.sendto.call_args_list] == [
+            proto.build_set_servos_speed(1, 0), proto.build_set_servos_speed(2, 0),
+            proto.build_stop_all_motors(), proto.build_master_unregister(),
+        ]
+        assert client.command_status("servo-0") == "SEND FAILED"
+        assert client.command_status("servo-1") == "SENT"
+
+
+def test_unknown_servo_types_preserve_motor_only_stop():
+    with patch("socket.socket") as socket_class:
+        sock = socket_class.return_value
+        client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, SensorState())
+        client.queue_set_servo_type(0, proto.SERVO_TYPE_CONTINUOUS)
+        client._master_registered = True
+        client.queue_stop_all_motors()
+        assert [call.args[0] for call in sock.sendto.call_args_list] == [proto.build_stop_all_motors()]
 
 
 class TestMasterRegistration:
@@ -145,16 +206,18 @@ class TestMasterRegistration:
             assert reply[1] == proto.RESP_OK
 
     def test_register_master_fire_and_forget(self):
-        """Fire-and-forget mode should register without waiting for a reply."""
+        """Registration must confirm master authority even for fire-and-forget motion."""
         state = SensorState()
         with patch('socket.socket') as mock_socket_class:
             mock_sock = MagicMock()
             mock_socket_class.return_value = mock_sock
-            mock_sock.recvfrom.side_effect = AssertionError("recvfrom should not be called")
+            mock_sock.recvfrom.return_value = (bytes([0x41, proto.RESP_OK]), ("127.0.0.1", 24642))
 
             client = SensorUDPClient("127.0.0.1", 24642, "UROCK", 2.0, state, fire_and_forget=True)
             client.register_master()
 
+            assert client._master_registered
+            mock_sock.recvfrom.assert_called_once()
             assert mock_sock.sendto.called
             sent_data = mock_sock.sendto.call_args[0][0]
             assert sent_data[0] == proto.make_action(proto.SERVICE_AMAKER, proto.CMD_MASTER_REGISTER)
