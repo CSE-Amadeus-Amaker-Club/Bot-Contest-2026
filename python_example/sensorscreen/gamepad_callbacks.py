@@ -16,7 +16,7 @@ def mix_track_speeds(raw_x: float, raw_y: float, deadzone: float = 0.12) -> tupl
         magnitude = (abs(value) - deadzone) / (1.0 - deadzone)
         return magnitude if value > 0 else -magnitude
 
-    forward = -100 * normalize(raw_y)
+    forward = 100 * normalize(raw_y)
     turn = -100 * normalize(raw_x)
     left = forward + turn
     right = forward - turn

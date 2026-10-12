@@ -19,6 +19,20 @@ Use [binary-protocol.md](binary-protocol.md) for the full byte-level reference. 
 | `0x08` | LidarService | Distance/intensity scan, stats, config, stream controls |
 | `0x09` | GeomagService | Heading, field, stream, config, calibration |
 | `0x0A` | ImuService | Acceleration, stream, config, bump config/events |
+| `0x0B` | SoundService | Stored WAV play `0xB1`, stop `0xB2`, status `0xB3`, volume `0xB4` |
+
+## SoundService
+
+Sound commands are an exception to master-protected writes: no registration
+or heartbeat is required for sound-only clients. Use `GET /sounds` to list
+filenames, `POST /sounds/<name>` with a raw WAV body to upload, and
+`DELETE /sounds/<name>` to delete while inactive. HTTP playback uses
+`POST /sounds/<name>/play`; UDP uses `0xB1` plus filename bytes.
+See [the sound tutorial](ai-udp-client.md#sound-convert-store-and-play) for
+SoX unsigned 8-bit mono 11025 Hz conversion, curl commands, and Python examples.
+UDP PLAY acknowledges queuing, not successful output. During playback,
+several sensors/UI activities and shock detection pause.
+
 ## HuskyLens V1 controls
 
 HuskyLensService targets the HuskyLens V1/SEN0305 over I2C. External clients send

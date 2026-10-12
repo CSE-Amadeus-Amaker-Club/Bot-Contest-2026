@@ -1,5 +1,9 @@
 # Expected Wiring
 
+The K10 onboard speaker needs no extra expansion-board wiring for stored
+WAV playback. See [sound conversion, file management, and playback code](ai-udp-client.md#sound-convert-store-and-play)
+for SoX unsigned 8-bit mono 11025 Hz preparation and HTTP/UDP control.
+
 This page describes the wiring assumptions used by the firmware and client examples.
 
 The cable diagram is the source of truth for sensor connections:

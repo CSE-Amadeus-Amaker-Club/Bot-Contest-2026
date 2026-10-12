@@ -1,5 +1,14 @@
 # Board UI User Guide
 
+## Speaker Sounds
+
+Use `http://<bot-ip>/soundservice.html` to manage stored WAV sounds.
+For compact files, convert with SoX to unsigned 8-bit mono 11025 Hz.
+See [the sound tutorial](ai-udp-client.md#sound-convert-store-and-play) for
+conversion, listing/uploading/deleting files, and Python HTTP/UDP playback.
+During playback, display refresh and several sensor activities pause,
+including shock detection; sound stop does not stop motors.
+
 The K10 Bot has a built-in **240 × 320 px TFT screen** and a **Button A** that let you monitor and navigate the device without a computer.
 
 ---
@@ -181,4 +190,4 @@ LEDs 1 and 2 are available for user control via `LEDService` binary protocol com
 
 ---
 
-*See also: [architecture.md](architecture.md) · [web-ui.md](web-ui.md) · [quickstart.md](quickstart.md)*
+*See also: [communication.md](communication.md) · [quickstart.md](quickstart.md) · [binary-protocol.md](binary-protocol.md)*

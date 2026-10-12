@@ -76,12 +76,12 @@ def _controls(client):
 
 
 @pytest.mark.parametrize("axes, speeds", [
-    ([0, -1], (100, 100)),
-    ([0, 1], (-100, -100)),
+    ([0, -1], (-100, -100)),
+    ([0, 1], (100, 100)),
     ([-1, 0], (100, -100)),
     ([1, 0], (-100, 100)),
-    ([-1, -1], (100, 0)),
-    ([1, -1], (0, 100)),
+    ([-1, -1], (0, -100)),
+    ([1, -1], (-100, 0)),
     ([0, 0], (0, 0)),
     ([0, -0.56], (50, 50)),
 ])
@@ -131,16 +131,16 @@ def test_paired_bumper_preserves_trigger_position_on_release():
 
 
 @pytest.mark.parametrize("raw_y, expected", [
-    (-0.12, 0), (0.12, 0), (-0.13, 1), (0.13, -1), (-0.56, 50), (0.56, -50),
+    (-0.12, 0), (0.12, 0), (-0.13, -1), (0.13, 1), (-0.56, -50), (0.56, 50),
 ])
 def test_track_deadzone_is_rescaled_once(raw_y, expected):
     assert mix_track_speeds(0, raw_y) == (expected, expected)
 
 
 @pytest.mark.parametrize("raw_x, raw_y, expected", [
-    (-1, 1, (0, -100)), (1, 1, (-100, 0)),
-    (-0.56, -1, (100, 33)), (0.56, -1, (33, 100)),
-    (-0.56, 1, (-33, -100)), (0.56, 1, (-100, -33)),
+    (-1, 1, (100, 0)), (1, 1, (0, 100)),
+    (-0.56, -1, (-33, -100)), (0.56, -1, (-100, -33)),
+    (-0.56, 1, (100, 33)), (0.56, 1, (33, 100)),
 ])
 def test_diagonal_track_mixing_preserves_ratio(raw_x, raw_y, expected):
     assert mix_track_speeds(raw_x, raw_y) == expected

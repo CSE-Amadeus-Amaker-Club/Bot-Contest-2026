@@ -1,149 +1,48 @@
 # Quick Start: Register & Control Servos
 
-The smallest possible program to take control of the bot and move a servo.
+## Sound-Only Quick Start
 
----
-## 0. Setup
+Sound-only control does not require master registration or heartbeat. See
+[Sound: Convert, Store, and Play](ai-udp-client.md#sound-convert-store-and-play)
+for conversion, upload, playback, and safe cleanup instructions. Sound playback
+pauses shock detection and several sensor/UI activities; do not rely on shock
+protection while audio is active.
 
-Plug the board with screen in the slot near the battery with the screen facing outside an camera the inside.
-Switch on the board.
-Once booted, your board will start its own **wifi access point** wich name is shown on screen, and password is **amaker-club**.
-Connect to it with your laptop. Control commands are sent directly to the board with UDP on port **24642**.
+## Motion Control
 
-## 1. Find the token
+Connect to the Wi-Fi network shown on the bot's screen. The bot accepts UDP
+commands on port `24642`. Read the five-character master token from Screen 1
+(App Info); pass that exact token as ASCII bytes, not as a hard-coded example.
 
-On screen the bot shows a **5-character token** on the TFT screen (Screen 1 — App Info, row `Master`: `REG: XXXXX`).  
-You must send this exact token to claim master control.
+Register with action `0x41`, then keep an independent heartbeat (`0x43`)
+running every 25-30 ms while controlling the bot. A heartbeat timeout stops
+DC motors only and does not release master ownership. `STOP_ALL_MOTORS`
+(`0x28`) also stops DC motors only. Before unregistering or exiting, send
+speed zero (`0x23`) individually to each continuous servo configured by your
+client, then send `0x28` and unregister with `0x42`. These are best-effort
+network commands, not a guarantee of physical safety.
 
----
-
-## 2. The three mandatory steps
-
-```
-① REGISTER   — claim master control with the token
-② SEND HEARTBEAT  — keep-alive, must repeat every ≤ 50 ms once started
-③ SEND COMMANDS
-```
-
-> **Heartbeat watchdog**: after the first `HEARTBEAT` frame arrives, the bot checks every tick whether another heartbeat arrived within **50 ms**. If not, it calls the emergency-stop callback (all motors/servos halted). Send heartbeats every **~30 ms** to stay safe.
-
----
-
-## 3. Binary frames at a glance
-
-All frames start with one **action byte** = `(service_id << 4) | command_id`.
-
-| What | Frame (hex) | Notes |
+| Action | Frame | Notes |
 |---|---|---|
-| **Register** | `41 <token>` | token = 5 ASCII bytes, e.g. `41 44 34 41 41 41` for "UROCK" |
-| **Heartbeat** | `43` | no reply sent by the bot |
-| **Unregister** | `42` | |
-| **Attach servo** (continuous) | `22 <mask> 02` | mask bit *n* = servo channel *n* |
-| **Attach servo** (270°) | `22 <mask> 01` | |
-| **Set servo speed** | `23 <mask> <speed>` | speed = signed byte −100…+100 |
-| **Set servo angle (270°)** | `2A <mask> <hi> <lo>` | angle 0–270, big-endian u16 |
-| **Stop all** | `28` | emergency stop, no master check |
+| Register | `41 <five uppercase-hex ASCII token bytes>` | Token is shown on the bot screen. |
+| Heartbeat | `43` | No reply; send every 25-30 ms. |
+| Unregister | `42` | Does not happen automatically on heartbeat timeout. |
+| Set servo type | `22 <mask> <type>` | `0=180 degree`, `1=270 degree`, `2=continuous`. |
+| Set servo speed | `23 <mask> <speed>` | Continuous servos only; signed speed from -100 to 100. |
+| Set positional angle | `24 <mask> <hi> <lo>` | Big-endian signed 16-bit angle; configure type first. |
+| Stop DC motors | `28` | Does not stop continuous servos. |
 
-**Response** for every command (except heartbeat):
-```
-[action_byte] [0x00=OK | 0x07=not_master | …]
-```
+`0x2A` is declared in a firmware header but is not implemented by the active
+handler. Do not send it; use configured `0x24` for positional servo angles.
+Standard responses begin `[action][status]`; non-empty UDP replies append an
+8-byte diagnostics trailer. PING (`0x44`) is an exception and has no status
+byte.
 
-Over UDP, non-empty replies append an 8-byte diagnostics trailer:
-`[rx_seq_be32][server_millis_be32]`.
-Parse status from byte 1, then ignore trailing diagnostics if your client does
-not use them.
-
----
-
-## 4. Transport
-
-| Transport | Host | Port | Endpoint |
-|---|---|---|---|
-| UDP | `<bot-ip>` | **24642** | — |
-
----
-
-## 5. Minimal Python example — UDP
-
-```python
-#!/usr/bin/env python3
-"""Minimal K10 Bot controller: register, move servo 0, unregister."""
-import socket, time
-
-BOT_IP   = "192.168.1.100"  # ← change
-BOT_PORT = 24642
-TOKEN    = "UROCK"          # ← change
-
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-sock.settimeout(0.5)
-
-def send(data: list[int]):
-    sock.sendto(bytes(data), (BOT_IP, BOT_PORT))
-
-def recv() -> list[int]:
-    try:
-        return list(sock.recvfrom(64)[0])
-    except Exception:
-        return []
-
-# ① Register
-send([0x41] + list(TOKEN.encode()))
-resp = recv()
-assert resp[1] == 0x00, f"Register failed: {resp}"
-print("Registered ✓")
-
-# ② First heartbeat
-send([0x43])
-last_hb = time.time()
-
-# ③ Attach servo 0 as continuous
-send([0x22, 0x01, 0x02])
-recv()
-
-# ④ Spin forward 2 s
-end = time.time() + 2.0
-while time.time() < end:
-    send([0x23, 0x01, 100])
-    if time.time() - last_hb >= 0.030:
-        send([0x43])
-        last_hb = time.time()
-    time.sleep(0.010)
-
-# ⑤ Stop
-send([0x23, 0x01, 0])
-
-# ⑥ Unregister
-send([0x42])
-recv()
-print("Unregistered ✓")
-
-sock.close()
-```
-
----
-
-## 6. Channel mask cheat-sheet
-
-`servo_mask` is a bitmask — set bit *n* to target servo channel *n*.
-
-| Channels to target | mask (hex) |
-|---|---|
-| Ch 0 only | `0x01` |
-| Ch 1 only | `0x02` |
-| Ch 0 + 1 | `0x03` |
-| Ch 2 only | `0x04` |
-| All 6 channels | `0x3F` |
-
-```python
-# Helper
-def mask(*channels) -> int:
-    return sum(1 << ch for ch in channels)
-
-mask(0)      # → 0x01
-mask(0, 1)   # → 0x03
-mask(2, 3)   # → 0x0C
-```
+Use the [validated Python controller example](ai-udp-client.md#python-skeleton)
+for registration, concurrent heartbeat, response validation, timeout handling,
+continuous-servo cleanup, and unregister sequencing. The [binary protocol](binary-protocol.md)
+is the complete command reference; [communication](communication.md) documents
+UDP and HTTP behavior.
 
 ---
 

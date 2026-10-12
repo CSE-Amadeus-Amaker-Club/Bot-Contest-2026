@@ -3,10 +3,47 @@
 Reproduces the device's on-board SensorsScreen (HuskyLens, Lidar, IMU, Geomag) on the host,
 using the same UDP protocol as the firmware — no serial/USB connection needed.
 
+## Sound Controls
+
+The sound dropdown lists stored WAV files from HTTP `GET /sounds`.
+Select a filename and play it through the onboard speaker; the control uses
+the existing UDP client when available, with HTTP playback as a fallback.
+Prepare compact effects with SoX:
+
+```bash
+sox input.wav -r 11025 -c 1 -b 8 -e unsigned-integer alert.wav
+soxi alert.wav
+```
+
+Unsigned 8-bit mono 11025 Hz PCM uses about 10.8 KiB/second; it sacrifices
+fidelity to save flash space and transfer time. The complete file must be
+at most 300 KiB. List/upload/delete are direct HTTP operations, not sensor
+stream frames. See [the sound tutorial](../../ai-udp-client.md#sound-convert-store-and-play)
+for curl commands, Python HTTP/UDP examples, and safe stop/delete sequencing.
+
+In application code, call the existing `client.queue_play_sound("alert.wav")`.
+This queues a UDP PLAY command, not a guarantee of audible playback.
+`SoundHttpClient.list_sounds()` returns JSON bytes; `play_sound(filename)`
+and `stop_sound()` provide HTTP control. That wrapper has no upload/delete
+methods; use the tutorial's HTTP requests for those operations.
+
+For a gamepad mapping in `sensorscreen.conf`:
+
+```ini
+[gamepad]
+button_a = gamepad_callbacks.play(filename="alert.wav",buttonvalue=$value)
+```
+
+Sound-only commands need no master registration; SensorsScreen still needs
+its normal registration/heartbeat flow for motion and sensor configuration.
+During playback, LiDAR, HuskyLens, UI refresh, and shock detection pause;
+IMU/Geomag telemetry is best-effort at 10 Hz. Do not rely on shock protection
+while audio is active.
+
 ## Setup
 
 ```bash
-cd example-clients/python/sensorscreen
+cd python_example/sensorscreen
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -82,8 +119,10 @@ commanded to speed `0` after their mode is set.
 Click `180`, `270`, or `CONT` to change a channel during a session. Positional sliders
 send angles in their valid range; continuous sliders send speed from `-100` to `100`.
 Dragging sends at most 10 UDP commands per second and always sends the final value when
-the mouse button is released. `STOP` sets a continuous channel to zero. `STOP ALL` sends
-the firmware emergency-stop command, which stops continuous servos and DC motors.
+the mouse button is released. `STOP` sets a continuous channel to zero. `STOP ALL` first
+sends individual zero-speed commands to continuous channels configured during this client
+session, then sends firmware action `0x28` to stop DC motors. Action `0x28` alone does not
+stop continuous servos.
  Unchanged servo values are suppressed. When a value changes, the UDP client sends at most two motion frames for that logical update, using the acknowledgement or command timeout to advance the bounded repeat. A newer value cancels remaining repeats for the older value, so stale stick or slider positions are not replayed. Heartbeats are separate and continue at the watchdog-safe 30 ms cadence.
 
 ## Gamepad action mapping
@@ -163,8 +202,8 @@ file as trusted input.
 ## Tests
 
 ```bash
-# Local venv
-source .venv/bin/activate
+# Local venv created in Setup
+source venv/bin/activate
 python -m pip install -e .[dev]
 python -m pytest -q tests/
 

@@ -1,10 +1,13 @@
 # SensorsScreen Guidelines
 
-Follow the parent `example-clients/python/AGENTS.md` and the repository root
+Follow the parent `python_example/AGENTS.md` and the repository root
 `AGENTS.md`. This directory contains a host-side Python replica of the K10
 SensorsScreen.
 
 ## Architecture
+- For sound conversion, HTTP list/upload/delete, and Python playback, use
+  [the sound tutorial](../../ai-udp-client.md#sound-convert-store-and-play).
+  Reuse existing sound HTTP/UDP helpers; do not invent upload/delete wrapper methods.
 - Keep `protocol.py` aligned with the firmware UDP message format and protocol
   documentation.
 - Keep network and master-registration behavior in `udp_client.py`; UI modules

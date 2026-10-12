@@ -1,4 +1,14 @@
 # READ THIS FIRST!
+
+> This firmware help copy is not the authority for current event rules. Use the
+> [participant contest guide](bot-contest-guide.md) for the canonical rules,
+> organization, and contest format. Hardware and controller details here are
+> supplementary; protocol behavior is defined by the active firmware reference.
+
+For onboard sound effects, see [Sound: Convert, Store, and Play](ai-udp-client.md#sound-convert-store-and-play):
+SoX unsigned 8-bit mono 11025 Hz conversion, curl list/upload/delete, and
+Python playback. Use audio you have permission to use, and account for
+paused shock detection and sensor/UI activities during playback.
 We strongly recommend to read this document before jumping in contest :)
 
 #  Introduction
