@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sensorscreen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+	"opencv-python>=4.8",
+	"numpy>=1.24",
+	"pygame>=2.5",
+	"tinker>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
+	"pytest>=8.4,<9",
+]
+
+[tool.setuptools]
+py-modules = [
+	"gamepad_manager",
+	"ui_state",
+	"gamepad_callbacks",
+	"huskylens_controls",
+	"render",
+	"protocol",
+	"sound_controls",
+	"screen_controls",
+	"main",
+	"config",
+	"sound_http_client",
+	"state",
+	"udp_client",
+	"ui_tkinter",
+	"capture",
+	"servo_controls",
+]

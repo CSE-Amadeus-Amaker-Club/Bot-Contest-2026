@@ -6,6 +6,50 @@ See [communication.md](communication.md) for transport details, [quickstart.md](
 
 ---
 
+## Service 0x0B SoundService
+
+Sound-only control requires no master registration or heartbeat. Files are
+managed through direct HTTP routes, not binary upload commands. See
+[Sound: Convert, Store, and Play](ai-udp-client.md#sound-convert-store-and-play)
+for SoX conversion to unsigned 8-bit mono 11025 Hz, curl list/upload/delete,
+and Python HTTP/UDP playback examples.
+
+| Action | Command | Request payload | Response before UDP diagnostics |
+|---|---|---|---|
+| `0xB1` | PLAY | Stored filename bytes, no terminator, at most 48 bytes | `[0xB1][status]` |
+| `0xB2` | STOP | None | `[0xB2][status]` |
+| `0xB3` | STATUS | None | `[0xB3][status][playing: u8]` |
+| `0xB4` | VOLUME | Percentage `0..100` as one byte | `[0xB4][status]` |
+
+`playing` is 0 or 1. UDP replies append `[rx_seq_be32][server_millis_be32]`;
+read status at byte 1 and the STATUS flag at byte 2. PLAY `0x00` confirms
+acceptance into a four-slot command queue, not file existence or successful
+audio output. Queue allocation/full failures return `0x03`; malformed
+requests, including invalid volume, return `0x01`. Check the catalog first
+and inspect `GET /sounds` for playback state/errors. Do not automatically
+retry PLAY after a timeout: the original request may already be playing.
+
+Use simple ASCII filenames ending in lowercase `.wav`, without paths or
+`..`. Accepted WAVs are PCM format 1, unsigned 8-bit or signed 16-bit,
+mono/stereo, 8000..48000 Hz, at most 300 KiB including headers.
+
+| HTTP method/path | Purpose |
+|---|---|
+| `GET /sounds` | JSON catalog in `sounds`, storage and playback metadata |
+| `POST /sounds/<name>` | Upload raw WAV body; replaces the same name |
+| `DELETE /sounds/<name>` | Delete while playback is inactive |
+| `POST /sounds/<name>/play` | Accept playback or replace the active sound |
+| `POST /sounds/stop` | Request stop |
+| `POST /sounds/volume?value=N` | Set volume percentage |
+
+Uploads must leave 128 KiB free. File changes are rejected during active
+playback; playback is rejected during uploads. After STOP, wait until
+`playback_state` is no longer `starting`, `playing`, or `stopping` before
+changing files. HTTP play success also means accepted, not completed.
+
+During playback, LiDAR, HuskyLens, UI refresh, and shock polling pause;
+IMU/Geomag telemetry is best-effort at 10 Hz. Sound STOP does not stop motors.
+
 ## Frame Format
 
 Every message is a raw binary string. Byte 0 is the **action byte**, all following bytes are the command payload.
@@ -16,6 +60,20 @@ Response:  [action_byte] [resp_code] [payload bytes…]   ← standard
 Response:  [action_byte] [payload bytes…]               ← PING only (no resp_code)
 Empty:     (no bytes)                                   ← HEARTBEAT / REBOOT (no reply)
 ```
+
+### UDP reply trailer (current firmware)
+
+Over UDP, every non-empty reply appends an 8-byte diagnostics trailer:
+
+```
+[protocol response bytes...] [rx_seq_be32] [server_millis_be32]
+```
+
+- `rx_seq_be32`: server-side received-packet counter for this reply
+- `server_millis_be32`: `millis()` snapshot taken when sending
+
+This includes ACK-style replies such as `[action][resp_code]`.
+The ACK is no longer an echo of the full incoming frame.
 
 ### Action byte encoding
 
@@ -54,6 +112,10 @@ has not started. Use `resp_operation_failed` when the service is running but a
 hardware transaction, sensor read, or persistence operation fails. Sensor query
 responses retain their normal payload shape when returning `resp_operation_failed`;
 the payload must be treated as invalid until a later response returns `resp_ok`.
+
+When UDP control is runtime-disabled because Wi-Fi is not ready, the transport
+returns `[action][resp_not_started]` (plus the UDP diagnostics trailer) without
+dispatching the command to services.
 
 ---
 
@@ -112,7 +174,7 @@ Controls 4 DC motors and 6 servo channels on the DFR1216 expansion board.
 | Value | Type         | Valid angle commands     |
 |-------|--------------|--------------------------|
 | `0`   | 180° servo   | SET_SERVOS_ANGLE, INCREMENT |
-| `1`   | 270° servo   | SET_SERVOS_ANGLE, INCREMENT, SET_SERVO270_ANGLE |
+| `1`   | 270° servo   | SET_SERVOS_ANGLE, INCREMENT |
 | `2`   | Continuous   | SET_SERVOS_SPEED only    |
 
 Mixing angle and speed commands on the wrong servo type returns `resp_invalid_params`.
@@ -128,9 +190,12 @@ Mixing angle and speed commands on the wrong servo type returns `resp_invalid_pa
 | `0x25` | INCREMENT_SERVOS_ANGLE | `[servo_mask][delta_hi][delta_lo]`          | `[0x25][status]`                                               | Big-endian signed i16 delta; clamped to type range |
 | `0x26` | GET_MOTORS_SPEED       | `[motor_mask]`                              | `[0x26][0x00][motor_mask][speed₀][speed₁…: i8]`               | One i8 per set bit, LSB-first                 |
 | `0x27` | GET_SERVOS_ANGLE       | `[servo_mask]`                              | `[0x27][0x00][servo_mask][ang₀_hi][ang₀_lo][ang₁_hi]…`        | Big-endian i16 per set bit, LSB-first         |
-| `0x28` | STOP_ALL_MOTORS        | *(none)*                                    | `[0x28][status]`                                               | No master check; emergency stop               |
+| `0x28` | STOP_ALL_MOTORS        | *(none)*                                    | `[0x28][status]`                                               | No master check; updated firmware stops DC and configured continuous servos, invalidating prior deferred motion; older firmware stops DC only |
 | `0x29` | GET_BATTERY            | *(none)*                                    | `[0x29][0x00][level: u8]`                                      | 0–100 %                                       |
-| `0x2A` | SET_SERVO270_ANGLE     | `[servo_mask][angle_hi][angle_lo]`          | `[0x2A][status]`                                               | Calibrated PWM; unsigned 0–270 (u16), clamped |
+
+`0x2A` is declared in the firmware header but is not implemented by the
+active handler. Do not send it. Configure the servo with `0x22`, then use
+`0x24` for positional angles, including a configured 270-degree servo.
 
 ### Angle byte encoding
 
@@ -251,11 +316,7 @@ Screen indices:
 ## Service 0x07 — HuskylensService
 
 Commands for the HuskyLens V1/SEN0305 service. The firmware talks to the device
-over I2C only; host clients talk to the K10 over UDP only. `SET_ILLUMINATION`
-controls the HuskyLens illumination LED, not the K10 RGB LEDs and not the HuskyLens
-LCD/backlight. The firmware first tries the MakeCode V1 sensor command `0x31`,
-then falls back to the Arduino enum-derived `0x3D`, and caches the command that
-returns `COMMAND_RETURN_OK`.
+over I2C only; host clients talk to the K10 over UDP only.
 
 RGB/status-light and LCD/display requests are intentionally scoped to the HuskyLens
 service so they cannot affect the K10 LED or screen services. For verified public
@@ -264,7 +325,6 @@ these requests currently return `resp_operation_failed`.
 
 | Action | Name      | Request payload      | Response         | Notes |
 |--------|-----------|----------------------|------------------|-------|
-| `0x71` | SET_ILLUMINATION (SET_LIGHT) | `[state: u8]` | `[0x71][status]` | `0=off`, `1=on`; illumination LED only. Firmware tries V1 sensor command `0x31`, then falls back to `0x3D`. |
 | `0x72` | SET_STREAM | `[enabled: u8][hz: u8]` | `[0x72][status]` | `enabled=0/1`; `hz=0` keeps current interval, otherwise `1..20`. |
 | `0x73` | GET_STREAM | *(none)* | `[0x73][status][enabled][hz]` | Returns current HuskyLens UDP stream state. |
 | `0x74` | SET_ALGORITHM | `[algorithm: u8]` | `[0x74][status]` | Algorithms: `0=face`, `1=object tracking`, `2=object recognition`, `3=line`, `4=color`, `5=tag`. |
@@ -289,7 +349,7 @@ stream and event frames and are not request commands.
 
 | Action | Name | Request payload | Response / event |
 |--------|------|-----------------|------------------|
-| `0x81` | QUERY_SCAN | *(optional subset)* | `[action][status][frame_id:u16le][point_count:u16le][distances:u16le...]` |
+| `0x81` | QUERY_SCAN | *(optional subset)* | `[action][status][frame_id:u16le][timestamp_ms:u32le][point_count:u16le][distances:u16le...]` |
 | `0x82` | QUERY_STATS | *(none)* | Statistics response |
 | `0x83` | SET_STREAM | `[enabled:u8][rate_hz:u8][subset:u8]` | `[0x83][status]` |
 | `0x84` | GET_STREAM | *(none)* | Stream state and rate |
@@ -336,56 +396,6 @@ transport on port `24642`; it has no dedicated HTTP endpoint.
 
 ---
 
-## Service 0x0B — SoundService
-
-Controls WAV playback from the `/sounds` directory on the 6 MiB LittleFS
-`voice_data` partition. File upload, listing, and deletion use the HTTP API;
-UDP carries only bounded playback commands and filenames.
-
-| Action | Name | Request payload | Response | Notes |
-|---|---|---|---|---|
-| `0xB1` | PLAY | `[filename: ASCII bytes]` | `[0xB1][status]` | 1-48 bytes; the UDP acknowledgement confirms queueing only |
-| `0xB2` | STOP | *(none)* | `[0xB2][status]` | Stops current playback and clears a queued replacement |
-| `0xB3` | STATUS | *(none)* | `[0xB3][status][playing: u8]` | `playing` is `0` or `1` |
-| `0xB4` | VOLUME | `[percent: u8]` | `[0xB4][status]` | `percent` must be `0` through `100` |
-
-`PLAY` is deferred from the Core 0 UDP callback to Core 1. A successful UDP
-acknowledgement does not prove that the named file exists or that playback
-started. The HTTP play route validates file existence before returning success.
-
-### WAV and storage limits
-
-- Structurally valid RIFF/WAVE with PCM format and a bounded `data` chunk;
-    metadata chunks may precede the audio data.
-- Mono or stereo, unsigned 8-bit or signed 16-bit samples, 8-48 kHz sample rate.
-- Lowercase `.wav` extension; filename length is at most 48 characters.
-- Maximum file size is 300 KiB.
-- Uploads must leave at least 128 KiB free in the shared partition.
-- Upload and delete operations are rejected while a playback task is active.
-
-### Playback execution
-
-Playback runs on Core 1 at priority 6 with an 8 KiB task stack and streams in
-4 KiB blocks. It takes the shared I2S mutex with a 250 ms timeout and handles
-partial I2S writes before reading the next block. Core 0 remains reserved for
-UDP transport.
-
-### HTTP sound API
-
-| Method and path | Behavior |
-|---|---|
-| `GET /sounds` | Returns storage totals, playback state, and stored filenames as JSON |
-| `POST /sounds/<name>` | Streams a raw WAV request body into LittleFS |
-| `DELETE /sounds/<name>` | Deletes a stored WAV when playback is idle |
-| `POST /sounds/<name>/play` | Starts playback or replaces the current sound |
-| `POST /sounds/stop` | Stops playback and clears a queued replacement |
-| `POST /sounds/volume?value=<0-100>` | Sets speaker volume, including during active playback |
-
-Command nibble `0x00` is reserved. An action is unique by its complete byte,
-not by the low command nibble alone.
-
----
-
 ## Master protection summary
 
 | Requires master | Open to all senders    |
@@ -400,45 +410,37 @@ not by the low command nibble alone.
 | SET_SERVOS_SPEED| GET_SERVOS_ANGLE       |
 | SET_SERVOS_ANGLE| GET_BATTERY (any svc)  |
 | INCREMENT_SERVOS_ANGLE | GET_LED_STATUS  |
-| SET_SERVO270_ANGLE | SET_LED_COLOR (DFR) |
+|                 | SET_LED_COLOR (DFR) |
 | SET_COLOR (LED) | TURN_OFF_ALL           |
-| TURN_OFF (LED)  | SET_LIGHT (HuskyLens)  |
-|                  | PLAY/STOP/STATUS (SoundService) |
+| TURN_OFF (LED)  | GET_CONTROLS (HuskyLens) |
 
 ---
 
-## Quick Python snippet
+## Offline frame construction example
+
+This example only builds and prints frames; it does not open a socket or move
+hardware. Validate a controller offline before connecting it to a bot.
 
 ```python
-import socket
+import struct
 
-HOST = "192.168.x.x"
-UDP_PORT = 24642
+motor_mask = 0x01
+motor_speed = 50
+if not 1 <= motor_mask <= 0x0F or not -100 <= motor_speed <= 100:
+    raise ValueError("Invalid motor mask or speed")
+motor_frame = bytes([0x21, motor_mask, motor_speed & 0xFF])
 
-def send_udp(frame: bytes) -> bytes:
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.settimeout(1.0)
-        s.sendto(frame, (HOST, UDP_PORT))
-        try:
-            data, _ = s.recvfrom(256)
-            return data
-        except socket.timeout:
-            return b""
+servo_mask = 0x01
+servo_angle = 90
+if not 1 <= servo_mask <= 0x3F or not 0 <= servo_angle <= 270:
+    raise ValueError("Invalid servo mask or angle")
+servo_frame = bytes([0x24, servo_mask]) + struct.pack(">h", servo_angle)
 
-# Set motor 1 to 50% forward  (motor_mask=0x01, speed=50)
-resp = send_udp(bytes([0x21, 0x01, 50]))
-print(f"action={resp[0]:#04x}  code={resp[1]:#04x}")
-
-# Set servo 0 to 90°  (servo_mask=0x01, angle=90 → 0x00 0x5A)
-resp = send_udp(bytes([0x24, 0x01, 0x00, 0x5A]))
-
-# Turn all K10 NeoPixels blue at half brightness
-resp = send_udp(bytes([0x51, 0x07, 0, 0, 255, 128]))
-
-# Emergency stop
-resp = send_udp(bytes([0x28]))
+print("motor:", motor_frame.hex())
+print("servo:", servo_frame.hex())
+print("stop DC motors:", bytes([0x28]).hex())
 ```
 
 ---
 
-*See also: [quickstart.md](quickstart.md) · [communication.md](communication.md) · [architecture.md](architecture.md)*
+*See also: [quickstart.md](quickstart.md) · [communication.md](communication.md) · [AI client examples](ai-udp-client.md)*

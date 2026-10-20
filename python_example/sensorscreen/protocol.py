@@ -1,9 +1,11 @@
 """Wire protocol constants and pack/unpack helpers for the K10 Bot UDP protocol.
 
-Mirrors the firmware constants in include/BotCommunication/BotMessageHandler.h
-and include/services/{Lidar,Geomag,Imu,Huskylens}Service.h. All multi-byte
-integers are little-endian, EXCEPT the IMU stream-enable hz field which the
-firmware encodes big-endian (see ImuService.cpp) — that quirk is preserved here.
+Mirrors firmware constants in k10-bot include/services and handler code.
+Most multi-byte integers are little-endian.
+Big-endian exceptions used by firmware handlers are:
+- IMU set-stream rate (u16be)
+- IMU bump config fields (u16be)
+- Servo positional angle fields (i16be)
 """
 
 from __future__ import annotations
@@ -53,7 +55,8 @@ UI_SCREEN_APP_LOG = 3
 UI_SCREEN_SERVICE_LOG = 4
 UI_SCREEN_DEBUG_LOG = 5
 UI_SCREEN_ESP_LOG = 6
-UI_SCREEN_COUNT = 7
+UI_SCREEN_DIAGNOSTICS = 7
+UI_SCREEN_COUNT = 8
 
 # HuskylensService (0x07)
 SERVICE_HUSKYLENS = 0x07
@@ -102,6 +105,24 @@ IMU_CMD_SET_BUMP_CONFIG = 0x07
 IMU_CMD_GET_BUMP_CONFIG = 0x08
 IMU_STREAM_FRAME_CMD = 0x0F
 IMU_BUMP_EVENT_CMD = 0x10
+
+# SoundService (0x0B)
+SERVICE_SOUND = 0x0B
+SOUND_CMD_PLAY = 0x01
+SOUND_CMD_STOP = 0x02
+SOUND_CMD_STATUS = 0x03
+SOUND_CMD_VOLUME = 0x04
+SOUND_FILENAME_MAX_LENGTH = 48
+SOUND_VOLUME_MIN = 0
+SOUND_VOLUME_MAX = 100
+
+LIDAR_STREAM_RATE_MIN = 1
+LIDAR_STREAM_RATE_MAX = 8
+GEOMAG_STREAM_RATE_MIN = 1
+GEOMAG_STREAM_RATE_MAX = 50
+IMU_STREAM_RATE_MIN = 1
+IMU_STREAM_RATE_MAX = 25
+HUSKYLENS_STREAM_RATE_MAX = 20
 
 # Matches firmware IMU shock direction byte: 0..5 == X-/X+/Y-/Y+/Z-/Z+
 IMU_BUMP_DIR_LABELS = {
@@ -166,6 +187,31 @@ def build_heartbeat() -> bytes:
     return bytes([make_action(SERVICE_AMAKER, CMD_HEARTBEAT)])
 
 
+def build_sound_play(filename: str) -> bytes:
+    """Build [0xB1][filename] for a stored WAV sound."""
+    if not filename or len(filename) > SOUND_FILENAME_MAX_LENGTH:
+        raise ValueError(f"filename must be 1..{SOUND_FILENAME_MAX_LENGTH} characters")
+    try:
+        encoded = filename.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("filename must contain ASCII characters") from exc
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_PLAY)]) + encoded
+
+
+def build_sound_stop() -> bytes:
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_STOP)])
+
+
+def build_sound_status() -> bytes:
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_STATUS)])
+
+
+def build_sound_volume(percent: int) -> bytes:
+    if not SOUND_VOLUME_MIN <= percent <= SOUND_VOLUME_MAX:
+        raise ValueError(f"volume must be in {SOUND_VOLUME_MIN}..{SOUND_VOLUME_MAX}")
+    return bytes([make_action(SERVICE_SOUND, SOUND_CMD_VOLUME), percent])
+
+
 def build_ui_set_screen(screen: int) -> bytes:
     """Build [0x63][screen] to select a K10 UI screen by its firmware index."""
     if not 0 <= screen < UI_SCREEN_COUNT:
@@ -174,19 +220,32 @@ def build_ui_set_screen(screen: int) -> bytes:
 
 
 def build_lidar_set_stream(enabled: bool, hz: int) -> bytes:
+    if enabled and not LIDAR_STREAM_RATE_MIN <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar hz must be in {LIDAR_STREAM_RATE_MIN}..{LIDAR_STREAM_RATE_MAX} when enabled")
+    if not enabled and not 0 <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar hz must be in 0..{LIDAR_STREAM_RATE_MAX} when disabled")
     return bytes([make_action(SERVICE_LIDAR, LIDAR_CMD_SET_STREAM), 1 if enabled else 0, hz, 0])
 
 
 def build_lidar_set_stream_intensity(enabled: bool, hz: int) -> bytes:
+    if enabled and not LIDAR_STREAM_RATE_MIN <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar intensity hz must be in {LIDAR_STREAM_RATE_MIN}..{LIDAR_STREAM_RATE_MAX} when enabled")
+    if not enabled and not 0 <= hz <= LIDAR_STREAM_RATE_MAX:
+        raise ValueError(f"lidar intensity hz must be in 0..{LIDAR_STREAM_RATE_MAX} when disabled")
     return bytes([make_action(SERVICE_LIDAR, LIDAR_CMD_SET_STREAM_INTENSITY), 1 if enabled else 0, hz, 0])
 
 
 def build_geomag_set_stream(enabled: bool, hz: int) -> bytes:
+    # Firmware currently reads a single u8 hz and requires 1..50 regardless of enabled flag.
+    if not GEOMAG_STREAM_RATE_MIN <= hz <= GEOMAG_STREAM_RATE_MAX:
+        raise ValueError(f"geomag hz must be in {GEOMAG_STREAM_RATE_MIN}..{GEOMAG_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_GEOMAG, GEOMAG_CMD_SET_STREAM), 1 if enabled else 0, hz])
 
 
 def build_imu_set_stream(enabled: bool, hz: int) -> bytes:
     # Firmware reads hz as big-endian u16 here, unlike every other service.
+    if not IMU_STREAM_RATE_MIN <= hz <= IMU_STREAM_RATE_MAX:
+        raise ValueError(f"imu hz must be in {IMU_STREAM_RATE_MIN}..{IMU_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_IMU, IMU_CMD_SET_STREAM), 1 if enabled else 0]) + struct.pack(">H", hz)
 
 
@@ -196,6 +255,10 @@ def build_imu_set_bump_config(threshold_mg: int, debounce_ms: int) -> bytes:
 
 
 def build_huskylens_set_stream(enabled: bool, hz: int) -> bytes:
+    if enabled and not 0 <= hz <= HUSKYLENS_STREAM_RATE_MAX:
+        raise ValueError(f"huskylens hz must be in 0..{HUSKYLENS_STREAM_RATE_MAX}")
+    if not enabled and not 0 <= hz <= HUSKYLENS_STREAM_RATE_MAX:
+        raise ValueError(f"huskylens hz must be in 0..{HUSKYLENS_STREAM_RATE_MAX}")
     return bytes([make_action(SERVICE_HUSKYLENS, HUSKYLENS_CMD_SET_STREAM), 1 if enabled else 0, hz])
 
 
@@ -258,7 +321,7 @@ def build_set_servos_angle(servo_mask: int, angle: int) -> bytes:
 
 
 def build_stop_all_motors() -> bytes:
-    """Build [0x28], which stops DC motors and continuous servo channels."""
+    """Build [0x28] to stop DC motor ports; continuous servos require zero-speed commands."""
     return bytes([make_action(SERVICE_MOTOR_SERVO, MOTOR_SERVO_CMD_STOP_ALL_MOTORS)])
 
 
@@ -282,14 +345,17 @@ class LidarFrame:
 
 def parse_lidar_frame(frame: bytes) -> LidarFrame | None:
     """[action][status][frame_id:u16LE][timestamp:u32LE][point_count:u16LE][...u16LE values]"""
-    if len(frame) < 10:
+    try:
+        if len(frame) < 10:
+            return None
+        frame_id, timestamp_ms, point_count = struct.unpack_from("<HIH", frame, 2)
+        expected_len = 10 + point_count * 2
+        if len(frame) < expected_len:
+            return None
+        values = list(struct.unpack_from(f"<{point_count}H", frame, 10))
+        return LidarFrame(frame_id=frame_id, timestamp_ms=timestamp_ms, values=values)
+    except struct.error:
         return None
-    frame_id, timestamp_ms, point_count = struct.unpack_from("<HIH", frame, 2)
-    expected_len = 10 + point_count * 2
-    if len(frame) < expected_len:
-        return None
-    values = list(struct.unpack_from(f"<{point_count}H", frame, 10))
-    return LidarFrame(frame_id=frame_id, timestamp_ms=timestamp_ms, values=values)
 
 
 @dataclass
@@ -303,10 +369,13 @@ class GeomagFrame:
 
 def parse_geomag_frame(frame: bytes) -> GeomagFrame | None:
     """[action][status][frame_id:u16LE][heading:u16LE][x,y,z:int16LE]"""
-    if len(frame) < 12:
+    try:
+        if len(frame) < 12:
+            return None
+        frame_id, heading, x, y, z = struct.unpack_from("<HHhhh", frame, 2)
+        return GeomagFrame(frame_id=frame_id, heading_deg=heading, field_x_ut=x, field_y_ut=y, field_z_ut=z)
+    except struct.error:
         return None
-    frame_id, heading, x, y, z = struct.unpack_from("<HHhhh", frame, 2)
-    return GeomagFrame(frame_id=frame_id, heading_deg=heading, field_x_ut=x, field_y_ut=y, field_z_ut=z)
 
 
 @dataclass
@@ -319,10 +388,13 @@ class ImuFrame:
 
 def parse_imu_frame(frame: bytes) -> ImuFrame | None:
     """[action][status][sample_id:u32LE][x,y,z:int16LE]"""
-    if len(frame) < 12:
+    try:
+        if len(frame) < 12:
+            return None
+        sample_id, x, y, z = struct.unpack_from("<Ihhh", frame, 2)
+        return ImuFrame(sample_id=sample_id, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
+    except struct.error:
         return None
-    sample_id, x, y, z = struct.unpack_from("<Ihhh", frame, 2)
-    return ImuFrame(sample_id=sample_id, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
 
 
 @dataclass
@@ -336,10 +408,13 @@ class ImuBumpEvent:
 
 def parse_imu_bump_event(frame: bytes) -> ImuBumpEvent | None:
     """[action][status][sample_id:u32LE][bump_dir:u8][x,y,z:int16LE]"""
-    if len(frame) < 13:
+    try:
+        if len(frame) < 13:
+            return None
+        sample_id, bump_dir, x, y, z = struct.unpack_from("<IBhhh", frame, 2)
+        return ImuBumpEvent(sample_id=sample_id, bump_dir=bump_dir, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
+    except struct.error:
         return None
-    sample_id, bump_dir, x, y, z = struct.unpack_from("<IBhhh", frame, 2)
-    return ImuBumpEvent(sample_id=sample_id, bump_dir=bump_dir, accel_x_mg=x, accel_y_mg=y, accel_z_mg=z)
 
 
 @dataclass
@@ -350,10 +425,30 @@ class ImuBumpConfig:
 
 def parse_imu_bump_config(frame: bytes) -> ImuBumpConfig | None:
     """[action][status][threshold_mg:u16LE][debounce_ms:u16LE] (get_bump_config reply)"""
-    if len(frame) < 6:
+    try:
+        if len(frame) < 6:
+            return None
+        threshold_mg, debounce_ms = struct.unpack_from("<HH", frame, 2)
+        return ImuBumpConfig(threshold_mg=threshold_mg, debounce_ms=debounce_ms)
+    except struct.error:
         return None
-    threshold_mg, debounce_ms = struct.unpack_from("<HH", frame, 2)
-    return ImuBumpConfig(threshold_mg=threshold_mg, debounce_ms=debounce_ms)
+
+
+@dataclass
+class SoundStatus:
+    playing: bool
+
+
+def parse_sound_status(frame: bytes) -> SoundStatus | None:
+    """[action][status][playing:u8] for SoundService STATUS (0xB3)."""
+    try:
+        if len(frame) < 3:
+            return None
+        if frame[1] != RESP_OK:
+            return None
+        return SoundStatus(playing=frame[2] != 0)
+    except IndexError:
+        return None
 
 
 @dataclass
@@ -390,29 +485,32 @@ def parse_huskylens_frame(frame: bytes) -> HuskylensFrame | None:
     """[action][status][frame:u16LE][w:u16LE][h:u16LE][block_count][arrow_count]
     then block_count * [x,y,w,h:u16LE][id,conf:u8] then arrow_count * [x0,y0,x1,y1:u16LE][id,conf:u8]
     """
-    if len(frame) < 10:
+    try:
+        if len(frame) < 10:
+            return None
+        frame_number, width, height, block_count, arrow_count = struct.unpack_from("<HHHBB", frame, 2)
+        offset = 10
+        blocks: list[HuskylensBlock] = []
+        for _ in range(block_count):
+            if offset + 10 > len(frame):
+                return None
+            x, y, w, h, bid, conf = struct.unpack_from("<HHHHBB", frame, offset)
+            blocks.append(HuskylensBlock(x, y, w, h, bid, conf))
+            offset += 10
+        arrows: list[HuskylensArrow] = []
+        for _ in range(arrow_count):
+            if offset + 10 > len(frame):
+                return None
+            x0, y0, x1, y1, aid, conf = struct.unpack_from("<HHHHBB", frame, offset)
+            arrows.append(HuskylensArrow(x0, y0, x1, y1, aid, conf))
+            offset += 10
+        return HuskylensFrame(
+            connected=frame[1] == 0x00,
+            frame_number=frame_number,
+            width=width,
+            height=height,
+            blocks=blocks,
+            arrows=arrows,
+        )
+    except struct.error:
         return None
-    frame_number, width, height, block_count, arrow_count = struct.unpack_from("<HHHBB", frame, 2)
-    offset = 10
-    blocks: list[HuskylensBlock] = []
-    for _ in range(block_count):
-        if offset + 10 > len(frame):
-            return None
-        x, y, w, h, bid, conf = struct.unpack_from("<HHHHBB", frame, offset)
-        blocks.append(HuskylensBlock(x, y, w, h, bid, conf))
-        offset += 10
-    arrows: list[HuskylensArrow] = []
-    for _ in range(arrow_count):
-        if offset + 10 > len(frame):
-            return None
-        x0, y0, x1, y1, aid, conf = struct.unpack_from("<HHHHBB", frame, offset)
-        arrows.append(HuskylensArrow(x0, y0, x1, y1, aid, conf))
-        offset += 10
-    return HuskylensFrame(
-        connected=frame[1] == 0x00,
-        frame_number=frame_number,
-        width=width,
-        height=height,
-        blocks=blocks,
-        arrows=arrows,
-    )

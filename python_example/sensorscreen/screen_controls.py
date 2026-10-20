@@ -19,6 +19,7 @@ SCREEN_BUTTONS = (
     ("SVC LOG", proto.UI_SCREEN_SERVICE_LOG),
     ("DEBUG", proto.UI_SCREEN_DEBUG_LOG),
     ("ESP LOG", proto.UI_SCREEN_ESP_LOG),
+    ("DIAG", proto.UI_SCREEN_DIAGNOSTICS),
 )
 
 
@@ -31,11 +32,11 @@ class ScreenCommandClient(Protocol):
 class ScreenControls:
     """Owns direct K10 screen selection buttons and their acknowledgement display."""
 
-    def __init__(self, client: ScreenCommandClient, width: int, top: int) -> None:
+    def __init__(self, client: ScreenCommandClient, width: int, top: int, selected_screen: int | None = None) -> None:
         self.client = client
         self.width = width
         self.top = top
-        self.selected_screen: int | None = None
+        self.selected_screen: int | None = selected_screen
 
     def _button_bounds(self, button_index: int) -> tuple[int, int, int, int]:
         margin = 8

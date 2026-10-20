@@ -29,4 +29,4 @@ def test_each_screen_button_queues_its_firmware_index():
         controls.handle_mouse(cv2.EVENT_LBUTTONDOWN, (x0 + x1) // 2, (y0 + y1) // 2)
 
     assert client.screens == list(range(proto.UI_SCREEN_COUNT))
-    assert controls.selected_screen == proto.UI_SCREEN_ESP_LOG
+    assert controls.selected_screen == proto.UI_SCREEN_DIAGNOSTICS

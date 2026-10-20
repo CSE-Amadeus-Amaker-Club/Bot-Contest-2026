@@ -1,15 +1,18 @@
 # SensorsScreen Guidelines
 
-Follow the parent `example-clients/python/AGENTS.md` and the repository root
+Follow the parent `python_example/AGENTS.md` and the repository root
 `AGENTS.md`. This directory contains a host-side Python replica of the K10
 SensorsScreen.
 
 ## Architecture
+- For sound conversion, HTTP list/upload/delete, and Python playback, use
+  [the sound tutorial](../../ai-udp-client.md#sound-convert-store-and-play).
+  Reuse existing sound HTTP/UDP helpers; do not invent upload/delete wrapper methods.
 - Keep `protocol.py` aligned with the firmware UDP message format and protocol
   documentation.
 - Keep network and master-registration behavior in `udp_client.py`; UI modules
   should communicate through the existing client and state abstractions.
-- Keep sensor, servo, sound, and HuskyLens controls isolated in their existing
+- Keep sensor, servo, and HuskyLens controls isolated in their existing
   modules rather than adding device-specific logic to `main.py`.
 - Preserve safe shutdown behavior: unregister as master and stop active outputs
   when the window closes or the client exits.

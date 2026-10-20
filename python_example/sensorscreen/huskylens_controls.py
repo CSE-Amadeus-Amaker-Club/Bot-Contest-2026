@@ -41,12 +41,31 @@ class HuskylensControlClient(Protocol):
 class HuskylensLightControl:
     """Owns the HuskyLens illumination and algorithm controls."""
 
-    def __init__(self, client: HuskylensControlClient) -> None:
+    def __init__(
+        self,
+        client: HuskylensControlClient,
+        enabled: bool = False,
+        rgb_light_enabled: bool = False,
+        display_enabled: bool = True,
+        algorithm_index: int | None = None,
+    ) -> None:
         self.client = client
-        self.enabled = False
-        self.rgb_light_enabled = False
-        self.display_enabled = True
-        self.algorithm_index = len(ALGORITHMS) - 1
+        self.enabled = enabled
+        self.rgb_light_enabled = rgb_light_enabled
+        self.display_enabled = display_enabled
+        default_index = len(ALGORITHMS) - 1
+        if algorithm_index is None:
+            self.algorithm_index = default_index
+        else:
+            self.algorithm_index = max(0, min(default_index, algorithm_index))
+
+    def settings(self) -> dict[str, int | bool]:
+        return {
+            "enabled": self.enabled,
+            "rgb_light_enabled": self.rgb_light_enabled,
+            "display_enabled": self.display_enabled,
+            "algorithm_index": self.algorithm_index,
+        }
 
     @staticmethod
     def _contains(x: int, y: int) -> bool:

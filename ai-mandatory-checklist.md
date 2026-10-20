@@ -1,5 +1,12 @@
 # Mandatory Checklist for UDP Clients
 
+## Sound-only Exception
+
+Sound-only commands need no master registration or heartbeat. During playback,
+shock detection, LiDAR, HuskyLens, and UI refresh pause; do not rely on shock
+protection. Use the [sound tutorial](ai-udp-client.md#sound-convert-store-and-play)
+for file handling and playback details.
+
 Use this checklist before driving motors, servos, LEDs, or changing board settings.
 
 ## Before Connecting
@@ -7,7 +14,8 @@ Use this checklist before driving motors, servos, LEDs, or changing board settin
 - Confirm the bot IP address from the TFT display or router/AP client list.
 - Read the 5-character token from the TFT App Info screen.
 - Confirm expected wiring and power, especially motors, servos, and LiDAR 5V power.
-- Decide whether the client will use UDP `:24642` 
+- Use UDP port `24642` for real-time control. See [communication.md](communication.md)
+	for the HTTP alternative.
 
 ## Session Flow
 
@@ -16,8 +24,11 @@ Use this checklist before driving motors, servos, LEDs, or changing board settin
 3. Start sending `HEARTBEAT` action `0x43` every 25-30 ms.
 4. Configure servo types before commanding servo motion.
 5. Calibrate sensors when needed before relying on their readings.
-6. On error, timeout, or program exit, send a stop command where appropriate.
-7. Send `UNREGISTER` action `0x42` when done.
+6. On shutdown or failure, send speed zero individually to every continuous
+	servo configured by this client, then send `STOP_ALL_MOTORS` (`0x28`).
+7. Send `UNREGISTER` action `0x42` in cleanup. Updated firmware stops DC
+	motors and configured continuous servos on heartbeat timeout, but does not
+	release master ownership. Older firmware stops DC motors only.
 
 ## Master-Protected Actions
 
@@ -37,14 +48,17 @@ Read-only queries generally do not require master control, but a client should s
 | Item | Required step |
 |---|---|
 | Geomag/BMM350 | Start calibration, rotate bot through all axes, stop calibration, verify calibrated state |
-| 270 degree servos | Set servo type to 270 degree before using calibrated angle command `0x2A` |
+| Positional servos | Set the servo type before using `SET_SERVOS_ANGLE` action `0x24`; `0x2A` is not implemented. |
 | Continuous servos | Set servo type to continuous before using speed command `0x23` |
 | LiDAR | Verify UART wiring and 5V power before enabling streams |
 | IMU bump events | Configure threshold/debounce before treating bump events as navigation facts |
 
 ## Safety Defaults
 
-- Use `STOP_ALL_MOTORS` action `0x28` on client shutdown.
+- Updated `STOP_ALL_MOTORS` action `0x28` stops DC motors and configured
+	continuous servos, preserving positional holding and invalidating earlier
+	deferred motion. Older firmware stops DC motors only. Always zero continuous
+	servos individually before unregistering; network stops remain best-effort.
 - Treat missing heartbeat as a control failure.
 - Do not send repeated motion commands without a heartbeat loop.
 - Clamp motor speed to `-100..100`.

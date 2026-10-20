@@ -1,53 +1,74 @@
-# READ THIS FIRST!
-We strongly recommend to read this document before jumping in contest :)
+# Participant Guide: K10 Bot Contest
 
-#  Introduction
+For sound conversion, storage, and playback instructions, see [Sound: Convert,
+Store, and Play](ai-udp-client.md#sound-convert-store-and-play). Use audio you
+have permission to use. Sound playback pauses shock detection and several
+sensor/UI activities.
+Read this guide before assembling or programming your bot. The rules below
+describe the current contest format; ask the organizers to confirm event timing,
+scoring, and safety procedures for your session.
 
-This document is your practical guide for the aMaker contest.
-It covers the essential steps to build a functional bot using the elements and win the contest.
+## Introduction
+
+This guide covers the supplied hardware, build constraints, and controller
+setup for the aMaker contest.
 
 
-# Contest 
-Build the best remote controlled bot, a champion that will keep its balloon longer than others. 
-There will be several rounds where your bots will evolved in an arena, agains one or multiple other bots. To add a bit of spice and challenge : 
-1. your bot ballon will be ** inflated and attached by an oppenent **
-2. each round will start with 1 minute in autonomous mode, followed by 3 minutes with remote control allowed.
+## Contest Format
+Build a remote-controlled bot that protects its balloon. There will be several
+arena rounds against one or more other bots. The current format is:
+1. Your opponent inflates and attaches your bot's balloon.
+2. Each round starts with one minute in autonomous mode, followed by three
+	minutes when remote control is allowed.
 
-# Bill of material
-You should have received: 
-* 1 microcontroller board (with screen and camera)
-* 1 LiDAR sensor that ** emits invisible lazer beam - DO NOT TARGET EYES WHEN POWERED**
-* 1 Accelerator sensor
-* 1 Geomagnetic sensor
-* 1 extension board, with a battery holder, lots of pins, **power switch** and **USB connector** for battery charging.
-* 1 battery 18650 (loaded). **Be extremely carefull with polarity when plugin the battery**
-* 1 set of lego bricks with plates, wheels, axles, tracks, gears. ![Bill%20of%20material%20pieces.jpg](Bill%20of%20material%20pieces.jpg) ~[book_chapters.png](book_chapters.png)
-* 2 servo motors : green ones 
-![svgreen64.png](svgreen64.png)
-* 2 angular servos : grey  ones ![svgrey64.png](svgrey64.png)
-* toothpicks and balloons
+## Supplied Components
 
-# Participant guide
-You'll have to design and assemble your own bot **only with the provided pieces**.
+Check your kit against the items provided at the event:
 
-Electronics is very easy ! You just have to 
-- plug the microcontroller board in the extension board
-- plug the servos you want to use to extension board pins S0 to S5 at your convenience.
-- plug the i2c sensors and huskylens to **I2C 3.3V** 
-- connect the LIDAR wires : green->p0 and blue->p1 (left side), red->5V black->GND (right side)
-![wiring.png](wiring.png)
-SAFETY FIRST when powered **NEVER EVER LOOK AT LIDAR IN FRONT OF CAMERA** : it emits **invisible 905nm laser beams** and has no class 1 certification. The LIDAR must always directed to the "bottom".
+- UniHiker K10 controller board with screen and camera
+- LiDAR sensor (emits invisible laser light; follow the safety instructions below)
+- Accelerometer and geomagnetic sensors
+- Expansion board with battery holder, power switch, and charging connector
+- One 18650 battery. **Check polarity before inserting it.**
+- LEGO beams, plates, wheels, axles, tracks, and gears
+- Two continuous-rotation servos (green) and two positional servos (grey)
+- Toothpicks and balloons
 
-Controlling your bot will be done via your computer using autonomous code,  keyboard, mouse,  joystick... 
+![Supplied building pieces](Bill%20of%20material%20pieces.jpg)
+![Green continuous-rotation servo](svgreen64.png)
+![Grey positional servo](svgrey64.png)
+
+## Build Rules and Wiring
+
+Build the chassis with the provided parts. Use a transparent sheet only where
+needed to protect electronics, as allowed by the event build rules.
+
+With the board powered off:
+
+- Seat the K10 board in the expansion board.
+- Connect servos to the expansion-board ports S0-S5.
+- Connect the I2C sensors and HuskyLens to the I2C 3.3 V header.
+- Connect the LiDAR wires as shown in the wiring diagram: green to P0, blue to
+	P1, red to 5 V, and black to GND.
+
+![Sensor wiring diagram](wiring.png)
+
+**LiDAR safety:** the sensor emits invisible 905 nm laser light and is not
+certified as Class 1. Never look into the sensor aperture while it is powered.
+Mount and aim it as shown in the diagram, toward the floor and away from people.
+
+You can control the bot from a computer using autonomous code, a keyboard,
+mouse, or joystick. Check contest rules with the organizers before using
+autonomous control during an event.
 
 
 ## Building your bot
 
-### Contraints
-1. The electronics parts have to be protected from toothpicks (using transparent sheet or lego pieces)
-1. The camera field of view must be free of obstacle (~90 degrees)
-1. The LIDAR field of view must be free of obstacle (~120 degrees horizontally) and directed to bottom for safety,
-1. The **balloon will be inflated and mounted by your oppenent** ;)
+### Constraints
+1. Protect electronic components from toothpicks using the supplied building pieces or a transparent sheet.
+2. Keep the camera's approximately 90-degree field of view clear.
+3. Keep the LiDAR's approximately 120-degree horizontal field of view clear and aim it toward the floor for safety.
+4. Your opponent will inflate and attach your balloon.
 
 
 ### Bot movement 
@@ -60,65 +81,89 @@ Motors running in opposite direction => turning on itself.
 #### Car mode
 One motor on the differential in and two wheels on the differential out, angular servo controls two direction wheels. Like a car. 
 
-#### Tips
-* There are plenty of other ways to nove your bot: be creative.
-* The green servos are not very fast. Use gears to fasten.
+#### Design tips
+
+* Tank and car layouts are starting points; other drive mechanisms are possible.
+* The green continuous-rotation servos are relatively slow. Gearing can trade
+	speed for torque, or vice versa.
 
 
-### Motor servos
+### Continuous-rotation servos
 ![svgreen64.png](svgreen64.png)
 
-Motor speed can be set from -100 to +100. 
-You may find some benefits using the gears to multiply rotation speed.
+Motor speed is controlled from -100 to +100. Gearing can increase wheel speed
+or torque depending on the ratio.
 
-Mounting Motors may be tricky as holes are not symetrical on the box : some holes are 1/2 depth.
+Mounting motors can be tricky because the holes are not symmetrical; some are
+only half-depth.
 
 
-### Angular servos 
+### Positional servos
 ![svgrey64.png](svgrey64.png)
-* Angular servo be set from 0 to 270 degree.
-* It tries to hold its position and has no protection: under **too high effort it will burn**
+* Positional servos can be commanded through a 0-270 degree range.
+* They attempt to hold position and have no overload protection. Excessive
+	force can damage or burn out a servo.
  
 
 ### Mounting the toothpick
-There are lots of ways to mount your tooth picks:
-- static at end of a pole
-- attached at end of and articulated arm
+
+Possible designs include a fixed toothpick at the end of a pole or one attached
+to an articulated arm. Keep sharp points and moving linkages away from people.
 - ...
 
 ### Mounting the balloons
-"You" will inflate and attach your balloon on your opponent bot, and  
-your opponents will **inflat and mount their balloon on your bot**.
-Don't think about cheating here :)
 
-### Tips an tricks
-- triple check the battery polarity before inserting and powering. 
-- double check the servo connection direction
-- Let the USB-c connector accessible
-- Use the USB-c connector to charge the battery
-- Let the power switch accessible
-- Be iterative
-- If you lack ideas, have a look at the book [The LEGO power functions idea book., Isogawa, Yoshihito](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up) : there are lots of ideas ![contest-guide-ideas.png](contest-guide-ideas.png).
+You will inflate and attach a balloon to your opponent's bot, and your opponent
+will do the same for yours. Follow the organizer's instructions for balloon
+placement; do not alter or interfere with another participant's balloon.
+
+### Build tips
+
+* Double-check battery polarity before installing the battery.
+* Confirm servo connector orientation before powering the board.
+* Keep the charging connector and power switch accessible.
+* Build and test incrementally; a small change is easier to debug than a pile
+	of clever ideas at once.
+* For mechanism inspiration, see [The LEGO Power Functions Idea Book by
+	Yoshihito Isogawa](https://archive.org/details/legopowerfunctio0000isog_f2e0/page/4/mode/2up).
+	The [idea gallery](contest-guide-ideas.png) shows a few examples.
 
 
 ## Coding part
 
-### Contest firmware.
-The microcontroller is provided with a custom firmware for the contest.
+### Contest firmware
+
+The controller board is supplied with custom contest firmware.
 
 #### Setup WiFi (optional)
-On first boot, if no known WiFi is accessible, board will open its own access point `amaker-XXXXX` and show its name on screen. Connect to it using password `amaker-club`.
-Once connected, read the board IP address and 5-character master token from the screen. Your controller will use both values to register over UDP.
+If the board cannot connect to a previously configured Wi-Fi network, it starts
+an access point named `amaker-XXXXX`; the exact name and IP address appear on
+the screen. The access point password is `amaker-club`. Connect your computer
+to that network, then read the bot IP address and five-character master token
+from the screen. Your controller needs both to register over UDP.
 
 #### UDP (port 24642)
-The microcontroller exposes all contest control services on UDP port 24642. All commands use the binary protocol described in [binary-protocol](binary-protocol.html).
+The firmware exposes contest-control services over UDP port `24642`. Commands
+use the [binary protocol](binary-protocol.html).
 
 ### Coding your controller
 
 #### Code your own client
-You will code your own controller that interacts with the bot firmware via UDP. Register with the token shown on screen, keep the heartbeat active, then send motor, servo, LED, or sensor commands.
+Write a controller that communicates with the firmware over UDP. Register with
+the token shown on screen, keep the heartbeat active, then send supported
+motor, servo, LED, or sensor commands.
 
 Start from [quickstart](quickstart.html), then use [communication](communication.html) and [binary-protocol](binary-protocol.html) for the full protocol details.
 
-#### tips
-A lazy/cheater demo client is present in repo.
+#### Tips
+An example client is available in the repository. Start with it, then tune the
+controller to your bot instead of expecting one default setup to win the arena.
+
+## Personalization
+
+Use removable paper or transparent sheets to decorate the bot; avoid applying
+stickers or ink directly to supplied parts. Keep status indicators and the
+camera/LiDAR fields of view unobstructed. Short sound cues can add character,
+but do not play sounds while relying on shock detection or sensor/UI updates.
+Follow the [sound guide](ai-udp-client.md#sound-convert-store-and-play) and use
+audio you have permission to use.

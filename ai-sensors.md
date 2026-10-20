@@ -1,5 +1,14 @@
 # Sensors
 
+## Sensor Availability during Sound Playback
+
+Sound playback pauses LiDAR, HuskyLens, UI refresh, and the shock watcher;
+shock events are not detected. IMU/Geomag telemetry is best-effort at 10 Hz.
+Do not interpret paused streams as fresh readings or rely on shock protection
+while sounds play. See [the sound tutorial](ai-udp-client.md#sound-convert-store-and-play)
+for SoX 8-bit mono 11025 Hz conversion, HTTP list/upload/delete, and Python
+playback. Sound-only control does not require master registration.
+
 The bot combines onboard sensors with external modules connected through the expansion board. This page distinguishes the sensors' **hardware capabilities** from the smaller set of features exposed by the current aMaker bot UDP firmware.
 
 > A capability listed by the hardware manufacturer is not automatically available to a UDP client. Use the **UDP access** column below as the source of truth for remote clients.
@@ -15,7 +24,7 @@ Sensor services use the same binary UDP transport as the rest of the bot on port
 | LiDAR |  64x8 DTOF sensor | `0x08` LidarService | Distance and intensity scans, statistics, stream configuration, and stream control |
 | Geomagnetic sensor | DFRobot SEN0619 BMM350 | `0x09` GeomagService | Heading, three-axis magnetic field, stream configuration and control, and hard-iron calibration |
 | Accelerometer | DFRobot SEN0409 LIS2DW12 | `0x0A` ImuService | Three-axis acceleration, stream configuration and control, and bump configuration/events |
-| AI vision | DFRobot SEN0305 HuskyLens K210 | `0x07` HuskyLensService | Light and stream controls; usable results depend on sensor and firmware readiness |
+| AI vision | DFRobot SEN0305 HuskyLens K210 | `0x07` HuskyLensService | Algorithm selection (`0x74`), learned-ID count, control-state query, and stream controls; usable results depend on sensor and firmware readiness |
 
 Sensor streams are asynchronous UDP frames. A client should identify each frame by its action byte and keep stream reception separate from command/reply handling. The documented LiDAR distance stream uses action `0x8F`.
 
@@ -46,7 +55,14 @@ The UDP service exposes only **acceleration and bump event**. The hardware's oth
 
 The [SEN0305 HuskyLens K210](https://wiki.dfrobot.com/sen0305/) provides built-in vision algorithms including face recognition, object tracking, object recognition, line tracking, color recognition, tag recognition, and object classification. Its native interfaces can report detected object coordinates and IDs.
 
-The UDP service documents light and stream controls only. **Choice of detection algorithm must be done on the device itself**. Do not assume that model training, algorithm selection, screenshots, SD-card functions, custom text, or the complete native result API can be controlled over UDP.
+**User guide for humans is available at DFRobot.com : [HuskyLens K210 AI Machine Vision Sensor](https://wiki.dfrobot.com/sen0305/docs/22610)**
+
+The UDP service supports selecting the algorithm with action `0x74` (see
+[the service reference](binary-protocol.md#service-0x07-huskylensservice)).
+Training is performed on the sensor. Do not assume screenshots, SD-card
+functions, custom text, or the complete native result API are available over
+UDP. RGB/status-light and LCD controls are exposed as HuskyLens-only requests,
+but are unsupported by the verified V1 device protocol.
 
 ## Onboard Sensors
 

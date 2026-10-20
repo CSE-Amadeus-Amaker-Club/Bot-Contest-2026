@@ -23,6 +23,41 @@ def test_build_master_register():
     assert proto.build_master_register("abc12") == bytes([0x41]) + b"abc12"
 
 
+def test_build_sound_play():
+    assert proto.build_sound_play("jarvis.wav") == bytes([0xB1]) + b"jarvis.wav"
+
+
+def test_build_sound_stop():
+    assert proto.build_sound_stop() == bytes([0xB2])
+
+
+def test_build_sound_status():
+    assert proto.build_sound_status() == bytes([0xB3])
+
+
+def test_build_sound_volume():
+    assert proto.build_sound_volume(0) == bytes([0xB4, 0])
+    assert proto.build_sound_volume(100) == bytes([0xB4, 100])
+
+
+def test_build_sound_volume_rejects_invalid_range():
+    for value in (-1, 101):
+        try:
+            proto.build_sound_volume(value)
+        except ValueError:
+            continue
+        raise AssertionError(f"build_sound_volume accepted {value}")
+
+
+def test_build_sound_play_rejects_invalid_filenames():
+    for filename in ("", "é.wav", "a" * 49):
+        try:
+            proto.build_sound_play(filename)
+        except ValueError:
+            continue
+        raise AssertionError(f"build_sound_play accepted {filename!r}")
+
+
 def test_build_ui_set_screen():
     for screen in range(proto.UI_SCREEN_COUNT):
         assert proto.build_ui_set_screen(screen) == bytes([0x63, screen])
@@ -38,12 +73,31 @@ def test_build_ui_set_screen_rejects_invalid_indexes():
 
 
 def test_build_imu_set_stream_is_big_endian_hz():
-    frame = proto.build_imu_set_stream(True, 0x0102)
-    assert frame == bytes([0xA2, 0x01, 0x01, 0x02])
+    frame = proto.build_imu_set_stream(True, 25)
+    assert frame == bytes([0xA2, 0x01, 0x00, 0x19])
 
 
 def test_build_lidar_set_stream():
-    assert proto.build_lidar_set_stream(True, 10) == bytes([0x83, 0x01, 10, 0x00])
+    assert proto.build_lidar_set_stream(True, 8) == bytes([0x83, 0x01, 8, 0x00])
+
+
+def test_build_stream_commands_reject_invalid_values():
+    invalid_calls = (
+        (proto.build_lidar_set_stream, (True, 0)),
+        (proto.build_lidar_set_stream, (True, 9)),
+        (proto.build_lidar_set_stream_intensity, (True, 9)),
+        (proto.build_geomag_set_stream, (True, 0)),
+        (proto.build_geomag_set_stream, (True, 51)),
+        (proto.build_imu_set_stream, (True, 0)),
+        (proto.build_imu_set_stream, (True, 26)),
+        (proto.build_huskylens_set_stream, (True, 21)),
+    )
+    for builder, args in invalid_calls:
+        try:
+            builder(*args)
+        except ValueError:
+            continue
+        raise AssertionError(f"{builder.__name__} accepted invalid values: {args}")
 
 
 def test_build_huskylens_set_illumination():
@@ -175,3 +229,14 @@ def test_parse_huskylens_frame_roundtrip():
     assert parsed.blocks[0].id == 5
     assert len(parsed.arrows) == 1
     assert parsed.arrows[0].id == 6
+
+
+def test_parse_sound_status_roundtrip():
+    parsed = proto.parse_sound_status(bytes([0xB3, proto.RESP_OK, 0x01]))
+    assert parsed is not None
+    assert parsed.playing is True
+
+
+def test_parse_sound_status_rejects_invalid_status_or_length():
+    assert proto.parse_sound_status(bytes([0xB3, proto.RESP_OPERATION_FAILED, 0x01])) is None
+    assert proto.parse_sound_status(bytes([0xB3, proto.RESP_OK])) is None

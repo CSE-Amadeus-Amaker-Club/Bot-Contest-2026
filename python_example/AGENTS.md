@@ -1,61 +1,57 @@
-# Example Clients — Agent Guidelines
+# SensorsScreen Python Client — Agent Guidelines
 
 ## Scope
-This subtree contains host-side client implementations for the K10 Bot.
+This subtree contains the host-side SensorsScreen client at
+`python_example/sensorscreen/`. There is no separate `example-clients/python/`
+tree, bundled simulator, or setup script in this repository.
+
+Sound clients: follow [the sound tutorial](../ai-udp-client.md#sound-convert-store-and-play)
+for SoX 8-bit mono 11025 Hz PCM conversion, HTTP list/upload/delete, and
+Python playback. Sound-only control needs no master; preserve motion safety.
 
 
-## Python Client Overview
-- **Entry point:** `python/main.py` — launches the Textual TUI (`K10BotApp`).
-- **User customisation:** `python/customize.py` — the only file end-users should edit (hardware, actions, keyboard, joystick mappings).
-- **Framework (do not modify):** `python/udp_client/` — UDP networking, controller loop, input handling, TUI widgets.
-- **Bot simulator:** `python/bot_simulator/` — local fake bot for offline testing.
-- **Tests:** `python/tests/` — run with `tox` or `pytest`.
+## Client Overview
+- **Entry point:** `sensorscreen/main.py`.
+- **Configuration:** `sensorscreen/sensorscreen.conf` (start from the example file).
+- **Protocol/client:** `sensorscreen/protocol.py` and `sensorscreen/udp_client.py`.
+- **Tests:** `sensorscreen/tests/` — run with pytest from the SensorsScreen directory.
 
 ## Architecture
 ```
-main.py  →  K10BotApp (TUI)  →  Controller (40 ms loop)
-                                      │
-                                  BotConfig  ←  customize.py
-                                      │
-                                 UDP packets  →  Bot
+main.py → SensorsScreen UI → SensorUDPClient → K10 Bot
 ```
-- `udp_client/control/` owns the controller loop and stick helpers.
-- `udp_client/network/` owns UDP send/receive.
-- `udp_client/input/` owns gamepad/keyboard input and calibration.
-- `udp_client/state/` owns shared app state.
-- `udp_client/ui/` owns Textual widgets.
+- `udp_client.py` owns UDP communication, registration, and the receive dispatcher.
+- Sensor, servo, sound, screen, and gamepad behavior lives in focused modules.
 
 ## Coding Conventions
 - Python 3.11+; follow existing type-annotation style.
-- Keep `udp_client/` framework code free of user-specific logic.
-- All bot customisation belongs in `customize.py`; document new helpers there.
-- Use `config.py` for infrastructure settings (ports, timing, network), not `customize.py`.
+- Keep network and master-registration behavior in `udp_client.py`.
+- Preserve the single receive dispatcher and safe shutdown behavior.
 - Naming: `snake_case` for variables/functions, `PascalCase` for classes.
 
 ## Build & Run
 ```bash
-cd example-clients/python
-bash setup.sh          # first time: creates venv + pip install -e .
+cd python_example/sensorscreen
+python3 -m venv venv
 source venv/bin/activate
-python main.py         # or: k10-bot
+pip install -r requirements.txt
+cp sensorscreen.conf.example sensorscreen.conf
+python main.py
 ```
 
 ## Testing
 ```bash
-cd example-clients/python
+cd python_example/sensorscreen
 source venv/bin/activate
-tox                    # runs pytest + linting
-pytest tests/          # tests only
+python -m pytest -q tests/
 ```
 
 ## Hard Guardrails
-- Do not edit `udp_client/` when the task only concerns customisation or UI.
-- Do not break the `customize.py` public API (`BOT_CONFIG`, `KEYBOARD_ACTIONS`, `JOYSTICK_CONFIG`) — external user guides depend on it.
-- Keep `bot_simulator/` in sync if the UDP packet format changes.
+- Keep protocol builders aligned with the active firmware and protocol reference.
+- Keep `sensorscreen.conf.example` aligned with supported configuration keys.
 
 ## Key References
-- Python client README: [python/README.md](python/README.md)
-- User guide: [python/USER_GUIDE.md](python/USER_GUIDE.md)
+- SensorsScreen README: [sensorscreen/README.md](sensorscreen/README.md)
 - Root project guidelines: [../AGENTS.md](../AGENTS.md)
-- Bot protocol details: [../../docs/user guides/AmakerBotService_protocol.md](../../docs/user%20guides/AmakerBotService_protocol.md)
-- UDP message handling: [../../docs/contributor guides/UDPServiceHandlers.md](../../docs/contributor%20guides/UDPServiceHandlers.md)
+- Bot protocol details: [../binary-protocol.md](../binary-protocol.md)
+- UDP transport details: [../communication.md](../communication.md)

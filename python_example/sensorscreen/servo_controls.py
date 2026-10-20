@@ -35,6 +35,7 @@ class ServoChannel:
     servo_type: int
     value: int = 0
     last_sent_at: float = 0.0
+    last_sent_value: int | None = None
 
 
 class ServoControls:
@@ -48,6 +49,9 @@ class ServoControls:
         self.top = top
         self.channels = [ServoChannel(servo_type) for servo_type in servo_types]
         self.dragging_channel: int | None = None
+
+    def servo_types(self) -> tuple[int, ...]:
+        return tuple(channel.servo_type for channel in self.channels)
 
     def _column_bounds(self, channel: int) -> tuple[int, int, int, int]:
         margin = 8
@@ -116,6 +120,8 @@ class ServoControls:
     def _send_value(self, channel: int, force: bool = False) -> None:
         state = self.channels[channel]
         now = time.monotonic()
+        if not force and state.last_sent_value == state.value:
+            return
         if not force and now - state.last_sent_at < DRAG_COMMAND_INTERVAL_S:
             return
         if state.servo_type == proto.SERVO_TYPE_CONTINUOUS:
@@ -123,6 +129,7 @@ class ServoControls:
         else:
             self.client.queue_set_servo_angle(channel, state.value, force)
         state.last_sent_at = now
+        state.last_sent_value = state.value
 
     def _set_mode(self, channel: int, servo_type: int) -> None:
         state = self.channels[channel]
@@ -130,6 +137,7 @@ class ServoControls:
             return
         if state.servo_type == proto.SERVO_TYPE_CONTINUOUS:
             self.client.queue_set_servo_speed(channel, 0, force=True)
+        state.last_sent_value = None
         state.servo_type = servo_type
         if servo_type == proto.SERVO_TYPE_CONTINUOUS:
             state.value = 0

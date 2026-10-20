@@ -29,6 +29,7 @@ SENSOR_GRID_H = PANEL_H + PANEL_H_BOTTOM + GRID_GAP * 3
 SERVO_BAND_TOP = SENSOR_GRID_TOP + SENSOR_GRID_H + GRID_GAP
 STATUS_BAR_TOP = SERVO_BAND_TOP + SERVO_BAND_H + GRID_GAP
 WINDOW_H = STATUS_BAR_TOP + STATUS_BAR_H
+SENSOR_ONLY_WINDOW_H = TOP_BAR_H + SENSOR_GRID_H + GRID_GAP + STATUS_BAR_H
 
 BG_COLOR = (30, 30, 30)
 TITLE_COLOR = (220, 220, 220)
@@ -59,6 +60,20 @@ def _title(panel: np.ndarray, text: str, fresh: bool) -> None:
     cv2.putText(panel, text, (10, 24), FONT, 0.6, color, 1, cv2.LINE_AA)
 
 
+def _draw_panel_hz(panel: np.ndarray, hz: float, x: int = PANEL_W - 115, y: int = 24) -> None:
+    cv2.putText(panel, f"{hz:4.1f}Hz", (x, y), FONT, 0.5, TITLE_COLOR, 1, cv2.LINE_AA)
+
+
+def _stream_hz_overlay(snapshot: SensorSnapshot) -> str:
+    return (
+        f"Hz HL:{snapshot.huskylens_hz:4.1f} "
+        f"LD:{snapshot.lidar_distance_hz:4.1f} "
+        f"LI:{snapshot.lidar_intensity_hz:4.1f} "
+        f"IMU:{snapshot.imu_hz:4.1f} "
+        f"MAG:{snapshot.geomag_hz:4.1f}"
+    )
+
+
 def _distance_color(mm: int) -> tuple[int, int, int]:
     """Return a BGR color for a distance in mm, matching the firmware red->white gradient."""
     if mm == 0 or mm < LIDAR_MIN_DIST:
@@ -84,6 +99,7 @@ def render_lidar_panel(snapshot: SensorSnapshot) -> np.ndarray:
     panel = _new_panel()
     fresh = snapshot.lidar_distance_fresh or snapshot.lidar_intensity_fresh
     _title(panel, "Lidar (64x8)", fresh)
+    _draw_panel_hz(panel, snapshot.lidar_distance_hz)
 
     heatmap_w = PANEL_W - 20
     heatmap_h = (PANEL_H - 80) // 2
@@ -118,7 +134,11 @@ def render_lidar_panel(snapshot: SensorSnapshot) -> np.ndarray:
                 x2, y2 = int(10 + (col + 1) * cell_size), int(intensity_y0 + (row + 1) * cell_size)
                 cv2.rectangle(panel, (x1, y1), (x2, y2), _intensity_color(val), -1)
 
-    status = f"UDP:{'ON' if fresh else 'OFF'} Min:{f'{min_mm}mm' if min_mm else '---'} Hits:{valid_points}"
+    status = (
+        f"UDP:{'ON' if fresh else 'OFF'} "
+        f"D:{snapshot.lidar_distance_hz:0.1f}Hz I:{snapshot.lidar_intensity_hz:0.1f}Hz "
+        f"Min:{f'{min_mm}mm' if min_mm else '---'} Hits:{valid_points}"
+    )
     cv2.putText(panel, status, (10, PANEL_H - 12), FONT, 0.5, TITLE_COLOR if fresh else STALE_COLOR, 1, cv2.LINE_AA)
     return panel
 
@@ -126,6 +146,7 @@ def render_lidar_panel(snapshot: SensorSnapshot) -> np.ndarray:
 def render_imu_panel(snapshot: SensorSnapshot) -> np.ndarray:
     panel = _new_panel(PANEL_H_BOTTOM)
     _title(panel, "IMU (accel)", snapshot.imu_fresh)
+    _draw_panel_hz(panel, snapshot.imu_hz)
     if snapshot.imu is None:
         cv2.putText(panel, "NO DATA", (10, 60), FONT, 0.7, STALE_COLOR, 1, cv2.LINE_AA)
         return panel
@@ -170,6 +191,7 @@ def render_imu_panel(snapshot: SensorSnapshot) -> np.ndarray:
 def render_geomag_panel(snapshot: SensorSnapshot) -> np.ndarray:
     panel = _new_panel(PANEL_H_BOTTOM)
     _title(panel, "Geomag (compass)", snapshot.geomag_fresh)
+    _draw_panel_hz(panel, snapshot.geomag_hz)
     if snapshot.geomag is None:
         cv2.putText(panel, "NO DATA", (10, 60), FONT, 0.7, STALE_COLOR, 1, cv2.LINE_AA)
         return panel
@@ -194,10 +216,12 @@ def render_geomag_panel(snapshot: SensorSnapshot) -> np.ndarray:
     return panel
 
 
-def render_huskylens_panel(snapshot: SensorSnapshot, huskylens_controls) -> np.ndarray:
+def render_huskylens_panel(snapshot: SensorSnapshot, huskylens_controls=None) -> np.ndarray:
     panel = _new_panel()
     _title(panel, "HuskyLens", snapshot.huskylens_fresh)
-    huskylens_controls.render(panel)
+    _draw_panel_hz(panel, snapshot.huskylens_hz)
+    if huskylens_controls is not None:
+        huskylens_controls.render(panel)
     if snapshot.huskylens is None:
         cv2.putText(panel, "NO DATA", (10, 60), FONT, 0.7, STALE_COLOR, 1, cv2.LINE_AA)
         return panel
@@ -232,6 +256,7 @@ def compose_dashboard(snapshot: SensorSnapshot, servo_controls, huskylens_contro
     window[:] = (15, 15, 15)
 
     cv2.putText(window, "aMaker UDP Bot", (12, TOP_BAR_H - 10), FONT, 0.7, TITLE_COLOR, 1, cv2.LINE_AA)
+    cv2.putText(window, _stream_hz_overlay(snapshot), (470, TOP_BAR_H - 10), FONT, 0.48, TITLE_COLOR, 1, cv2.LINE_AA)
 
     panels = [
         render_huskylens_panel(snapshot, huskylens_controls),
@@ -257,6 +282,39 @@ def compose_dashboard(snapshot: SensorSnapshot, servo_controls, huskylens_contro
         f"   OUT: {packet_stats.sent_total:,} ({packet_stats.sent_rate:.1f}/s, {_format_bps(packet_stats.sent_byte_rate)})"
     )
     cv2.putText(window, status_text, (12, STATUS_BAR_TOP + STATUS_BAR_H - 9), FONT, 0.55, TITLE_COLOR, 1, cv2.LINE_AA)
+    return window
+
+
+def compose_sensor_display(snapshot: SensorSnapshot, packet_stats) -> np.ndarray:
+    """Compose a sensor-only window for use with native (non-OpenCV) controls."""
+    window = np.zeros((SENSOR_ONLY_WINDOW_H, WINDOW_W, 3), dtype=np.uint8)
+    window[:] = (15, 15, 15)
+
+    cv2.putText(window, "aMaker UDP Bot sensors", (12, TOP_BAR_H - 10), FONT, 0.7, TITLE_COLOR, 1, cv2.LINE_AA)
+    cv2.putText(window, _stream_hz_overlay(snapshot), (470, TOP_BAR_H - 10), FONT, 0.48, TITLE_COLOR, 1, cv2.LINE_AA)
+
+    panels = [
+        render_huskylens_panel(snapshot, huskylens_controls=None),
+        render_lidar_panel(snapshot),
+        render_imu_panel(snapshot),
+        render_geomag_panel(snapshot),
+    ]
+    positions = [
+        (GRID_GAP, TOP_BAR_H + GRID_GAP),
+        (GRID_GAP * 2 + PANEL_W, TOP_BAR_H + GRID_GAP),
+        (GRID_GAP, TOP_BAR_H + GRID_GAP * 2 + PANEL_H),
+        (GRID_GAP * 2 + PANEL_W, TOP_BAR_H + GRID_GAP * 2 + PANEL_H),
+    ]
+    for panel, (x, y) in zip(panels, positions):
+        h = panel.shape[0]
+        window[y:y + h, x:x + PANEL_W] = panel
+
+    status_text = (
+        f"UDP IN: {packet_stats.recv_total:,} ({packet_stats.recv_rate:.1f}/s, {_format_bps(packet_stats.recv_byte_rate)})"
+        f"   OUT: {packet_stats.sent_total:,} ({packet_stats.sent_rate:.1f}/s, {_format_bps(packet_stats.sent_byte_rate)})"
+    )
+    status_top = TOP_BAR_H + SENSOR_GRID_H + GRID_GAP
+    cv2.putText(window, status_text, (12, status_top + STATUS_BAR_H - 9), FONT, 0.55, TITLE_COLOR, 1, cv2.LINE_AA)
     return window
 
 
