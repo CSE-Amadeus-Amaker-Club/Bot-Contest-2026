@@ -55,6 +55,8 @@ The UDP service exposes only **acceleration and bump event**. The hardware's oth
 
 The [SEN0305 HuskyLens K210](https://wiki.dfrobot.com/sen0305/) provides built-in vision algorithms including face recognition, object tracking, object recognition, line tracking, color recognition, tag recognition, and object classification. Its native interfaces can report detected object coordinates and IDs.
 
+**User guide for humans is available at DFRobot.com : [HuskyLens K210 AI Machine Vision Sensor](https://wiki.dfrobot.com/sen0305/docs/22610)**
+
 The UDP service supports selecting the algorithm with action `0x74` (see
 [the service reference](binary-protocol.md#service-0x07-huskylensservice)).
 Training is performed on the sensor. Do not assume screenshots, SD-card

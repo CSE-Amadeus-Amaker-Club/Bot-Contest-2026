@@ -1,3 +1,18 @@
+
+# CAUTION
+
+**This repo has been generated is  90% AI generated.**
+**If you face issues with code, contact the contest organizer**
+
+
+---
+
+
+
+
+
+
+
 # K10 Bot Contest: Participant Documentation
 
 Welcome to the aMaker bot contest documentation. This repository contains the
@@ -30,9 +45,9 @@ configuration. Read it from the screen and supply it at runtime.
 | Need | Reference |
 |---|---|
 | Contest rules, assembly, and safety | [Participant contest guide](bot-contest-guide.md) |
+| First connection and control session | [Quickstart](quickstart.md) |
 | Wiring and power connections | [Wiring](ai-wiring.md) |
 | Screen navigation and diagnostics | [Board UI](board-ui.md) |
-| First connection and control session | [Quickstart](quickstart.md) |
 | Required session lifecycle and cleanup | [Mandatory checklist](ai-mandatory-checklist.md) |
 | Supported hardware features and limits | [Capabilities](ai-capabilities.md) |
 | Command groups and access requirements | [Services](ai-services.md) |
@@ -42,12 +57,11 @@ configuration. Read it from the screen and supply it at runtime.
 | Sensor prerequisites and decoding context | [Sensors](ai-sensors.md) |
 | Sound conversion, storage, and playback | [Sound tutorial](ai-udp-client.md#sound-convert-store-and-play) |
 
-## Choose a Python Client
+## Have a loot at demo Python Client
 
 | Client | Use it for |
 |---|---|
 | [SensorsScreen](python_example/sensorscreen/README.md) | View HuskyLens, LiDAR, IMU, and geomagnetic data on a computer; access its documented servo, gamepad, and sound controls. |
-| [Mecanum controller](python_example/mecanum_control/README.md) | Control a sensorless mecanum bot with the standalone desktop application and its wheel configuration. |
 
 Each client README owns its installation, configuration, launch, and offline test
 instructions. Choose the client that matches your actual hardware; do not assume
