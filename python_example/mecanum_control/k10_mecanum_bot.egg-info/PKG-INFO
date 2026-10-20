@@ -1,0 +1,140 @@
+Metadata-Version: 2.4
+Name: k10-mecanum-bot
+Version: 0.1.0
+Summary: Camera and Xbox gamepad controller for a four-servo K10 mecanum bot
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: PySide6<7,>=6.7
+Requires-Dist: pygame<3,>=2.5
+Requires-Dist: requests<3,>=2.32
+
+# K10 Mecanum Bot
+
+Standalone uv desktop application for the sensorless K10 mecanum bot.
+The Python package remains `mecanum_control`; the executable is `mecanum-bot`.
+No SensorsScreen installation or repository-wide Python environment is required.
+
+## Setup and Run
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/).
+Run these commands from the **k10-bot-gh-pages repository root**, on Linux
+or Windows PowerShell:
+
+```bash
+uv sync --project python_example/mecanum_control --locked
+uv run --project python_example/mecanum_control --locked mecanum-bot
+```
+
+uv uses the project's Python 3.13 pin, `uv.lock`, and its own `.venv` under
+`python_example/mecanum_control/`. Application code supports Python 3.11+.
+uv downloads the pinned interpreter if it is not installed. Existing sibling
+applications and the repository-root environment are not modified.
+
+Alternative module launch and configuration overrides:
+
+```bash
+uv run --project python_example/mecanum_control --locked python -m mecanum_control --ip 192.168.4.1
+uv run --project python_example/mecanum_control --locked mecanum-bot --config /path/to/settings.json
+```
+
+Use the settings button to edit IP/hostname, UDP port (24642), HTTP port (80),
+wheel connectors, reversal switches, deadzone, and rotation sensitivity.
+Enter the five-character uppercase hex master token shown on the K10 screen
+in the masked field, then Connect. The token is memory-only and is not saved
+or logged. Nonsecret settings are saved under `~/.config/k10-mecanum-bot/`
+on Linux or `%APPDATA%\k10-mecanum-bot\` on Windows.
+See [config.example.json](config.example.json) for the settings format.
+
+Linux requires a graphical session, Qt platform libraries and SDL gamepad
+access. Windows is targeted but has not been verified on a Windows machine.
+
+## Controls
+
+The wheel layout assumes X-arranged mecanum rollers viewed from above:
+
+| Wheel | Connector | Protocol channel | Default reversal |
+|---|---|---|---|
+| Front left | S1 | 0 | No |
+| Front right | S2 | 1 | Yes |
+| Rear left | S3 | 2 | No |
+| Rear right | S4 | 3 | Yes |
+
+Reversal is a configurable mounting assumption, not verified hardware.
+Verify directions and neutral with wheels unloaded before ground testing.
+The client configures the selected channels as continuous servos; no sensor
+streams, calibration, or sensor hardware are required.
+
+| Xbox input | Action |
+|---|---|
+| Right stick XY | Robot-relative forward/backward and sideways translation |
+| Left stick X | Rotation; stick right means clockwise |
+| Left stick Y, triggers, bumpers | Unused |
+| A / B / X / Y | All LEDs green / red / blue / yellow; off on release |
+
+Translation and rotation are mixed from one snapshot. Wheel speeds are
+normalized together and limited by the speed slider, initially 30%.
+SDL Xbox mapping is preferred; raw joystick indices are configurable.
+
+Center the sticks and press Resume after connecting or pausing. There is
+**no hold-to-drive bumper** and **video loss does not stop driving**.
+STOP, window focus loss, controller removal, and stale input pause motion.
+A command timeout or heartbeat fault ends the session and requires reconnect.
+Disconnect, interruption, and window close perform best-effort cleanup.
+
+## Protocol and Safety
+
+The application uses the documented binary UDP protocol and the existing
+HTTP `/cam/stream` MJPEG endpoint. There are no invented authentication headers
+or camera settings routes. Read [the mandatory checklist](../../ai-mandatory-checklist.md),
+[the client pattern](../../ai-udp-client.md), and
+[the protocol reference](../../binary-protocol.md).
+
+Used actions are registration `0x41`, independent heartbeat `0x43` every 25 ms,
+continuous type `0x22`, signed servo speed `0x23`, LEDs `0x51`, stop `0x28`,
+and unregister `0x42`. One UDP receiver validates sender, action, status and
+reply length after removing the eight-byte diagnostics trailer.
+
+Four distinct wheel speeds are sent as separate commands: the protocol has
+no atomic four-wheel update or per-command transaction ID. ACKs confirm
+deferred queuing, not physical movement. Commands are serialized; old demands
+are not queued or replayed after a timeout. UDP duplication/reordering and
+delayed acknowledgments remain protocol limitations.
+
+Install and verify the sibling firmware safety patch before driving loaded
+wheels. Updated firmware stops DC motors and configured continuous servos
+on `0x28` or watchdog timeout and discards earlier deferred motion. Positional
+holding is preserved. **Older firmware stops DC motors only**, so continuous
+wheels may keep spinning after connection loss or a client crash. The app
+cannot remotely certify the installed failsafe. Watchdog timeout does not
+release master ownership.
+
+Cleanup still zeros each selected continuous servo individually, sends `0x28`,
+then unregisters while keeping heartbeat active. Network cleanup cannot
+guarantee physical safety; keep a physical power cutoff accessible.
+
+## Offline Tests
+
+From the repository root on Linux:
+
+```bash
+uv sync --project python_example/mecanum_control --locked
+source python_example/mecanum_control/.venv/bin/activate
+QT_QPA_PLATFORM=offscreen SDL_VIDEODRIVER=dummy uv run --project python_example/mecanum_control --locked pytest python_example/mecanum_control/tests -q
+```
+
+Windows PowerShell:
+
+```powershell
+uv sync --project python_example/mecanum_control --locked
+.\python_example\mecanum_control\.venv\Scripts\Activate.ps1
+$env:QT_QPA_PLATFORM='offscreen'
+$env:SDL_VIDEODRIVER='dummy'
+uv run --project python_example/mecanum_control --locked pytest python_example/mecanum_control/tests -q
+```
+
+The dev dependency group is included by default. Tests use mocks and loopback,
+never a live bot: mixer normalization, simultaneous movement/rotation, button
+edges, controller removal, settings, registration/reply validation, timeouts,
+cleanup, MJPEG streaming, camera stalls, and desktop video resizing.
+Physical wheel direction, neutral, Windows operation, and WiFi-loss stopping
+still require explicitly authorized hardware validation.
