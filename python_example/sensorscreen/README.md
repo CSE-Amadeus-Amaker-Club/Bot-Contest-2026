@@ -3,43 +3,6 @@
 Reproduces the device's on-board SensorsScreen (HuskyLens, Lidar, IMU, Geomag) on the host,
 using the same UDP protocol as the firmware — no serial/USB connection needed.
 
-## Sound Controls
-
-The sound dropdown lists stored WAV files from HTTP `GET /sounds`.
-Select a filename and play it through the onboard speaker; the control uses
-the existing UDP client when available, with HTTP playback as a fallback.
-Prepare compact effects with SoX:
-
-```bash
-sox input.wav -r 11025 -c 1 -b 8 -e unsigned-integer alert.wav
-soxi alert.wav
-```
-
-Unsigned 8-bit mono 11025 Hz PCM uses about 10.8 KiB/second; it sacrifices
-fidelity to save flash space and transfer time. The complete file must be
-at most 300 KiB. List/upload/delete are direct HTTP operations, not sensor
-stream frames. See [the sound tutorial](../../ai-udp-client.md#sound-convert-store-and-play)
-for curl commands, Python HTTP/UDP examples, and safe stop/delete sequencing.
-
-In application code, call the existing `client.queue_play_sound("alert.wav")`.
-This queues a UDP PLAY command, not a guarantee of audible playback.
-`SoundHttpClient.list_sounds()` returns JSON bytes; `play_sound(filename)`
-and `stop_sound()` provide HTTP control. That wrapper has no upload/delete
-methods; use the tutorial's HTTP requests for those operations.
-
-For a gamepad mapping in `sensorscreen.conf`:
-
-```ini
-[gamepad]
-button_a = gamepad_callbacks.play(filename="alert.wav",buttonvalue=$value)
-```
-
-Sound-only commands need no master registration; SensorsScreen still needs
-its normal registration/heartbeat flow for motion and sensor configuration.
-During playback, LiDAR, HuskyLens, UI refresh, and shock detection pause;
-IMU/Geomag telemetry is best-effort at 10 Hz. Do not rely on shock protection
-while audio is active.
-
 ## Setup
 
 ```bash
@@ -211,3 +174,39 @@ python -m pytest -q tests/
 uv sync --extra dev
 uv run python -m pytest -q tests/
 ```
+
+
+
+## Sound Controls
+
+Yes, your board can play sounds, just for fun. **The problem with sound is that it takes highest priority on on one core** for quality: **during playback, LiDAR, HuskyLens, UI refresh, and shock detection pause !** and IMU/Geomag telemetry are on best-effort.
+
+The sound dropdown lists stored WAV files from HTTP `GET /sounds`.
+Select a filename and play it through the onboard speaker; the control uses
+the existing UDP client when available, with HTTP playback as a fallback.
+Prepare compact effects with SoX:
+
+```bash
+sox input.wav -r 11025 -c 1 -b 8 -e unsigned-integer alert.wav
+soxi alert.wav
+```
+
+Unsigned 8-bit mono 11025 Hz PCM uses about 10.8 KiB/second; it sacrifices
+fidelity to save flash space and transfer time. The complete file must be
+at most 300 KiB. List/upload/delete are direct HTTP operations, not sensor
+stream frames. See [the sound tutorial](../../ai-udp-client.md#sound-convert-store-and-play)
+for curl commands, Python HTTP/UDP examples, and safe stop/delete sequencing.
+
+In application code, call the existing `client.queue_play_sound("alert.wav")`.
+This queues a UDP PLAY command, not a guarantee of audible playback.
+`SoundHttpClient.list_sounds()` returns JSON bytes; `play_sound(filename)`
+and `stop_sound()` provide HTTP control. That wrapper has no upload/delete
+methods; use the tutorial's HTTP requests for those operations.
+
+For a gamepad mapping in `sensorscreen.conf`:
+
+```ini
+[gamepad]
+button_a = gamepad_callbacks.play(filename="alert.wav",buttonvalue=$value)
+```
+
